@@ -284,13 +284,14 @@ elseif(BUILD_TEST)
     
     add_test(NAME ShardedKVStoreTest COMMAND sharded_kvstore_test)
     
-    add_executable(simple_cache_test test/simple_cache_test.cpp
+    add_executable(cached_storage_test test/cached_storage_test.cpp
+        ${STORAGE_SOURCES}
         network/logger.cpp
     )
-    target_link_libraries(simple_cache_test 
+    target_link_libraries(cached_storage_test 
         Threads::Threads
         spdlog::spdlog
     )
     
-    add_test(NAME SimpleCacheTest COMMAND simple_cache_test)
+    add_test(NAME CachedStorageTest COMMAND cached_storage_test)
 endif()
