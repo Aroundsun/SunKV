@@ -54,10 +54,14 @@ set(COMMAND_SOURCES
     command/CommandDispatcher.cpp
     command/commands/PingCommand.cpp
     command/commands/EchoCommand.cpp
+    command/commands/SetCommand.cpp
+    command/commands/GetCommand.cpp
+    command/commands/DelCommand.cpp
+    command/commands/ExistsCommand.cpp
 )
 
 set(STORAGE_SOURCES
-    # Storage layer sources will be added here
+    storage/StorageEngine.cpp
 )
 
 set(PERSISTENCE_SOURCES
@@ -217,5 +221,16 @@ elseif(BUILD_TEST)
     add_test(NAME RESPNetworkIntegrationTest COMMAND resp_network_integration_test)
     add_test(NAME RESPSimpleTest COMMAND resp_simple_test)
     add_test(NAME RESPPipelineTest COMMAND resp_pipeline_test)
-    add_test(NAME CommandFrameworkTest COMMAND command_framework_test)
+    add_executable(basic_commands_test test/basic_commands_test.cpp
+        ${PROTOCOL_SOURCES}
+        ${COMMAND_SOURCES}
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(basic_commands_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME BasicCommandsTest COMMAND basic_commands_test)
 endif()
