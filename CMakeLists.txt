@@ -305,4 +305,49 @@ elseif(BUILD_TEST)
     )
     
     add_test(NAME StorageEngineTest COMMAND storage_engine_test)
+    
+    add_executable(wal_test test/wal_test.cpp
+        storage/WAL.cpp
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(wal_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME WALTest COMMAND wal_test)
+    
+    add_executable(persistence_test tmp/persistence_test.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(persistence_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(simple_persistence_test tmp/simple_persistence_test.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(simple_persistence_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(quick_recovery_test tmp/quick_recovery_test.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(quick_recovery_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
 endif()
