@@ -29,14 +29,13 @@ TcpServer::~TcpServer() {
     // 将清理工作移到事件循环线程中执行
     // 如果 EventLoop 还在运行，就清理连接；如果已经在析构，就跳过
     if (loop_ && !loop_->isDestructing()) {
-        loop_->runInLoop([this]() {
-            for (auto& conn : connections_) {
-                TcpConnectionPtr connPtr = conn.second;
-                conn.second.reset();
-                connPtr->getLoop()->runInLoop(
-                    std::bind(&TcpConnection::connectDestroyed, connPtr));
-            }
-        });
+        // 直接清理连接，避免跨线程调用
+        for (auto& conn : connections_) {
+            TcpConnectionPtr connPtr = conn.second;
+            conn.second.reset();
+            // 不调用 connectDestroyed，避免跨线程问题
+        }
+        connections_.clear();
     }
 }
 

@@ -47,7 +47,8 @@ set(NETWORK_SOURCES
 )
 
 set(PROTOCOL_SOURCES
-    # Protocol layer sources will be added here
+    protocol/RESPType.cpp
+    protocol/RESPParser.cpp
 )
 
 set(STORAGE_SOURCES
@@ -154,6 +155,32 @@ elseif(BUILD_TEST)
         spdlog::spdlog
     )
     
+    add_executable(resp_protocol_test test/resp_protocol_test.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(resp_protocol_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(resp_network_integration_test test/resp_network_integration_test.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(resp_network_integration_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(resp_simple_test test/resp_simple_test.cpp
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(resp_simple_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
     # 添加测试目标
     add_test(NAME TimerTest COMMAND timer_test)
     add_test(NAME EventLoopTest COMMAND eventloop_test)
@@ -163,4 +190,7 @@ elseif(BUILD_TEST)
     add_test(NAME ConcurrentConnectionTest COMMAND concurrent_connection_test)
     add_test(NAME ConnectionLifecycleTest COMMAND connection_lifecycle_test)
     add_test(NAME PerformanceBenchmarkTest COMMAND performance_benchmark_test)
+    add_test(NAME RESPProtocolTest COMMAND resp_protocol_test)
+    add_test(NAME RESPNetworkIntegrationTest COMMAND resp_network_integration_test)
+    add_test(NAME RESPSimpleTest COMMAND resp_simple_test)
 endif()
