@@ -20,7 +20,7 @@ void RESPParser::reset() {
 
 ParseResult RESPParser::parse(const std::string& data) {
     if (data.empty()) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(0);
     }
     
     size_t pos = 0;
@@ -29,7 +29,7 @@ ParseResult RESPParser::parse(const std::string& data) {
         switch (state_) {
             case ParseState::START: {
                 if (pos >= data.size()) {
-                    return ParseResult::makeIncomplete();
+                    return ParseResult::makeIncomplete(pos);
                 }
                 
                 char type_char = data[pos];
@@ -86,13 +86,13 @@ ParseResult RESPParser::parse(const std::string& data) {
         }
     }
     
-    return ParseResult::makeIncomplete();
+    return ParseResult::makeIncomplete(pos);
 }
 
 ParseResult RESPParser::parseSimpleString(const std::string& data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     }
     
     std::string value = data.substr(pos, crlf_pos - pos);
@@ -119,13 +119,13 @@ ParseResult RESPParser::parseSimpleString(const std::string& data, size_t& pos) 
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_);
+    return ParseResult::makeSuccess(current_value_, pos);
 }
 
 ParseResult RESPParser::parseError(const std::string& data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     }
     
     std::string message = data.substr(pos, crlf_pos - pos);
@@ -152,13 +152,13 @@ ParseResult RESPParser::parseError(const std::string& data, size_t& pos) {
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_);
+    return ParseResult::makeSuccess(current_value_, pos);
 }
 
 ParseResult RESPParser::parseInteger(const std::string& data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     }
     
     int64_t value = parseInteger(data, pos, crlf_pos);
@@ -189,13 +189,13 @@ ParseResult RESPParser::parseInteger(const std::string& data, size_t& pos) {
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_);
+    return ParseResult::makeSuccess(current_value_, pos);
 }
 
 ParseResult RESPParser::parseBulkStringSize(const std::string& data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     }
     
     int64_t size = parseInteger(data, pos, crlf_pos);
@@ -229,7 +229,7 @@ ParseResult RESPParser::parseBulkStringSize(const std::string& data, size_t& pos
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_);
+        return ParseResult::makeSuccess(current_value_, pos);
     } else {
         // 解析批量字符串数据
         state_ = ParseState::BULK_STRING_DATA;
@@ -247,7 +247,7 @@ ParseResult RESPParser::parseBulkStringData(const std::string& data, size_t& pos
         temp_data_ += data.substr(pos);
         pos = data.length();
         processed_bytes_ += available;
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     } else {
         // 数据足够
         temp_data_ += data.substr(pos, remaining);
@@ -256,7 +256,7 @@ ParseResult RESPParser::parseBulkStringData(const std::string& data, size_t& pos
         
         // 检查是否有 CRLF
         if (pos + 2 > data.length()) {
-            return ParseResult::makeIncomplete();
+            return ParseResult::makeIncomplete(pos);
         }
         
         if (data[pos] != '\r' || data[pos + 1] != '\n') {
@@ -286,14 +286,14 @@ ParseResult RESPParser::parseBulkStringData(const std::string& data, size_t& pos
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_);
+        return ParseResult::makeSuccess(current_value_, pos);
     }
 }
 
 ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete();
+        return ParseResult::makeIncomplete(pos);
     }
     
     int64_t size = parseInteger(data, pos, crlf_pos);
@@ -326,7 +326,7 @@ ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_);
+        return ParseResult::makeSuccess(current_value_, pos);
     } else if (size == 0) {
         // 空数组
         current_value_ = makeArray({});
@@ -349,7 +349,7 @@ ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_);
+        return ParseResult::makeSuccess(current_value_, pos);
     } else {
         // 创建新的数组上下文
         ArrayContext ctx;

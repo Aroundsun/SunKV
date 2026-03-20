@@ -181,6 +181,14 @@ elseif(BUILD_TEST)
         spdlog::spdlog
     )
     
+    add_executable(resp_pipeline_test test/resp_pipeline_test.cpp
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(resp_pipeline_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
     # 添加测试目标
     add_test(NAME TimerTest COMMAND timer_test)
     add_test(NAME EventLoopTest COMMAND eventloop_test)
@@ -193,4 +201,5 @@ elseif(BUILD_TEST)
     add_test(NAME RESPProtocolTest COMMAND resp_protocol_test)
     add_test(NAME RESPNetworkIntegrationTest COMMAND resp_network_integration_test)
     add_test(NAME RESPSimpleTest COMMAND resp_simple_test)
+    add_test(NAME RESPPipelineTest COMMAND resp_pipeline_test)
 endif()

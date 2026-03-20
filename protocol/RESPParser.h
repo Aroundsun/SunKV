@@ -20,19 +20,20 @@ enum class ParseState {
 struct ParseResult {
     bool success;
     bool complete;
+    size_t processed_bytes;  // 已处理的字节数
     RESPValue::Ptr value;
     std::string error;
     
-    static ParseResult makeSuccess(RESPValue::Ptr value) {
-        return {true, true, value, ""};
+    static ParseResult makeSuccess(RESPValue::Ptr value, size_t processed) {
+        return {true, true, processed, value, ""};
     }
     
-    static ParseResult makeIncomplete() {
-        return {true, false, nullptr, ""};
+    static ParseResult makeIncomplete(size_t processed) {
+        return {true, false, processed, nullptr, ""};
     }
     
     static ParseResult makeError(const std::string& message) {
-        return {false, false, nullptr, message};
+        return {false, false, 0, nullptr, message};
     }
 };
 
