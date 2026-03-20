@@ -294,4 +294,15 @@ elseif(BUILD_TEST)
     )
     
     add_test(NAME CachedStorageTest COMMAND cached_storage_test)
+    
+    add_executable(storage_engine_test test/storage_engine_test.cpp
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(storage_engine_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME StorageEngineTest COMMAND storage_engine_test)
 endif()
