@@ -62,6 +62,7 @@ set(COMMAND_SOURCES
 
 set(STORAGE_SOURCES
     storage/StorageEngine.cpp
+    storage/ShardedKVStore.cpp
 )
 
 set(PERSISTENCE_SOURCES
@@ -271,4 +272,15 @@ elseif(BUILD_TEST)
     add_test(NAME CommandIntegrationTest COMMAND command_integration_test)
     add_test(NAME CommandUnitTest COMMAND command_unit_test)
     add_test(NAME CommandErrorTest COMMAND command_error_test)
+    
+    add_executable(sharded_kvstore_test test/sharded_kvstore_test.cpp
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(sharded_kvstore_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME ShardedKVStoreTest COMMAND sharded_kvstore_test)
 endif()
