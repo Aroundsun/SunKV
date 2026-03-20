@@ -180,8 +180,6 @@ private:
         }
     }
     
-    static const char kCRLF[];
-    
     std::vector<char> buffer_;
     size_t readerIndex_;
     size_t writerIndex_;

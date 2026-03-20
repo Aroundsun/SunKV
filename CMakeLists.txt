@@ -31,24 +31,29 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/server)
 
 # Source files
 set(NETWORK_SOURCES
-    network/EventLoop.cpp
+    network/Buffer.cpp
     network/Channel.cpp
+    network/EventLoop.cpp
     network/Poller.cpp
-    network/logger.cpp
+    network/TcpConnection.cpp
+    network/TcpServer.cpp
     network/Timer.cpp
     network/TimerQueue.cpp
-    network/Buffer.cpp
-    network/Socket.cpp
-    network/TcpConnection.cpp
-    network/Acceptor.cpp
-    network/TcpServer.cpp
     network/EventLoopThread.cpp
     network/EventLoopThreadPool.cpp
+    network/logger.cpp
 )
 
 set(PROTOCOL_SOURCES
     protocol/RESPType.cpp
     protocol/RESPParser.cpp
+)
+
+set(COMMAND_SOURCES
+    command/Command.cpp
+    command/CommandDispatcher.cpp
+    command/commands/PingCommand.cpp
+    command/commands/EchoCommand.cpp
 )
 
 set(STORAGE_SOURCES
@@ -189,6 +194,16 @@ elseif(BUILD_TEST)
         spdlog::spdlog
     )
     
+    add_executable(command_framework_test test/command_framework_test.cpp
+        ${PROTOCOL_SOURCES}
+        ${COMMAND_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(command_framework_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
     # 添加测试目标
     add_test(NAME TimerTest COMMAND timer_test)
     add_test(NAME EventLoopTest COMMAND eventloop_test)
@@ -202,4 +217,5 @@ elseif(BUILD_TEST)
     add_test(NAME RESPNetworkIntegrationTest COMMAND resp_network_integration_test)
     add_test(NAME RESPSimpleTest COMMAND resp_simple_test)
     add_test(NAME RESPPipelineTest COMMAND resp_pipeline_test)
+    add_test(NAME CommandFrameworkTest COMMAND command_framework_test)
 endif()
