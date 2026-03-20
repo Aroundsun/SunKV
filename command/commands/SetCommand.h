@@ -19,7 +19,7 @@ public:
     }
     
     CommandResult execute(const std::vector<RESPValue::Ptr>& args) override {
-        if (args.size() < 2) {
+        if (args.size() < 2 || args.size() > 3) {
             return CommandResult::makeError("ERR wrong number of arguments for 'set' command (expected 2-3 arguments)");
         }
         

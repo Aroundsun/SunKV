@@ -201,6 +201,7 @@ elseif(BUILD_TEST)
     add_executable(command_framework_test test/command_framework_test.cpp
         ${PROTOCOL_SOURCES}
         ${COMMAND_SOURCES}
+        ${STORAGE_SOURCES}
         network/logger.cpp
     )
     target_link_libraries(command_framework_test 
@@ -233,4 +234,41 @@ elseif(BUILD_TEST)
     )
     
     add_test(NAME BasicCommandsTest COMMAND basic_commands_test)
+    
+    add_executable(command_integration_test test/command_integration_test.cpp
+        ${PROTOCOL_SOURCES}
+        ${COMMAND_SOURCES}
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(command_integration_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(command_unit_test test/command_unit_test.cpp
+        ${PROTOCOL_SOURCES}
+        ${COMMAND_SOURCES}
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(command_unit_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_executable(command_error_test test/command_error_test.cpp
+        ${PROTOCOL_SOURCES}
+        ${COMMAND_SOURCES}
+        ${STORAGE_SOURCES}
+        network/logger.cpp
+    )
+    target_link_libraries(command_error_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME CommandIntegrationTest COMMAND command_integration_test)
+    add_test(NAME CommandUnitTest COMMAND command_unit_test)
+    add_test(NAME CommandErrorTest COMMAND command_error_test)
 endif()
