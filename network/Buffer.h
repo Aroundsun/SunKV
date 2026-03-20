@@ -93,106 +93,94 @@ public:
         assert(len <= readableBytes());
         if (len < readableBytes()) {
             readerIndex_ += len;
-        } else {
-            retrieveAll();
+        }
+        readerIndex_ += len;
+        if (readerIndex_ == writerIndex_) {
+            readerIndex_ = writerIndex_ = kCheapPrepend;
         }
     }
     
-    // 读取直到指定位置
     void retrieveUntil(const char* end) {
-        assert(peek() <= end);
-        assert(end <= beginWrite());
         retrieve(end - peek());
     }
     
-    // 读取所有数据
     void retrieveAll() {
-        readerIndex_ = kCheapPrepend;
-        writerIndex_ = kCheapPrepend;
+        readerIndex_ = writerIndex_ = kCheapPrepend;
     }
     
-    // 读取所有数据并返回字符串
-    std::string retrieveAllAsString() {
-        return retrieveAsString(readableBytes());
-    }
-    
-    // 读取 len 字节并返回字符串
     std::string retrieveAsString(size_t len) {
-        assert(len <= readableBytes());
         std::string result(peek(), len);
         retrieve(len);
         return result;
     }
     
-    // 在前面添加数据
-    void prepend(const void* data, size_t len) {
-        assert(len <= prependableBytes());
-        readerIndex_ -= len;
-        const char* d = static_cast<const char*>(data);
-        std::copy(d, d + len, begin() + readerIndex_);
-    }
-    
-    // 缩缓冲区空间
-    void shrink(size_t reserve) {
-        std::vector<char> buffer(kCheapPrepend + readableBytes() + reserve);
-        std::copy(peek(), peek() + readableBytes(), buffer.begin() + kCheapPrepend);
-        buffer_.swap(buffer);
-        readerIndex_ = kCheapPrepend;
-        writerIndex_ = kCheapPrepend + readableBytes();
-    }
-    
-    // 确保足够的空间
-    void ensureWritableBytes(size_t len) {
-        if (writableBytes() < len) {
-            makeSpace(len);
-        }
-        assert(writableBytes() >= len);
-    }
-    
-    // 添加数据
-    void append(const std::string& str) {
-        append(str.data(), str.size());
+    std::string retrieveAllAsString() {
+        std::string result(peek(), readableBytes());
+        retrieveAll();
+        return result;
     }
     
     void append(const char* data, size_t len) {
         ensureWritableBytes(len);
-        std::copy(data, data + len, beginWrite());
-        hasWritten(len);
+        std::copy(data, data + len, begin() + writerIndex_);
+        writerIndex_ += len;
     }
     
-    void append(const void* data, size_t len) {
-        append(static_cast<const char*>(data), len);
+    void append(const std::string& data) {
+        append(data.data(), data.length());
     }
     
-    // 从文件描述符读取数据
-    ssize_t readFd(int fd, int* savedErrno);
-    
-    // 向文件描述符写入数据
-    ssize_t writeFd(int fd, int* savedErrno);
-
-private:
-    char* begin() {
-        return &*buffer_.begin();
-    }
-    
-    const char* begin() const {
-        return &*buffer_.begin();
-    }
-    
-    // 分配空间
-    void makeSpace(size_t len) {
-        if (writableBytes() + prependableBytes() < len + kCheapPrepend) {
-            // 需要扩展缓冲区
-            buffer_.resize(writerIndex_ + len);
-        } else {
-            // 移动数据到前面
+    void prepend(const char* data, size_t len) {
+        if (len > prependableBytes()) {
+            // 空间不足，需要移动数据
             size_t readable = readableBytes();
             std::copy(begin() + readerIndex_, begin() + writerIndex_, begin() + kCheapPrepend);
             readerIndex_ = kCheapPrepend;
             writerIndex_ = readerIndex_ + readable;
-            assert(readable == readableBytes());
+        }
+        readerIndex_ -= len;
+        std::copy(data, data + len, begin() + readerIndex_);
+    }
+    
+    void prepend(const std::string& data) {
+        prepend(data.data(), data.length());
+    }
+    
+    // 写入文件描述符
+    ssize_t readFd(int fd, int* savedErrno);
+    
+    // 写入文件描述符
+    ssize_t writeFd(int fd, int* savedErrno);
+
+private:
+    const char* begin() const { return buffer_.data(); }
+    char* begin() { return buffer_.data(); }
+    
+    void ensureWritableBytes(size_t len) {
+        if (writableBytes() < len) {
+            size_t readable = readableBytes();
+            size_t newSize = buffer_.size();
+            
+            // 如果可读数据很大，需要重新分配
+            if (newSize < readable + len + kCheapPrepend) {
+                newSize = readable + len + kCheapPrepend;
+            }
+            newSize = std::max(newSize, buffer_.size() * 2);  // 双倍增长
+            
+            std::vector<char> newBuffer(newSize);
+            
+            // 复制可读数据到新缓冲区
+            if (readable > 0) {
+                std::copy(begin() + readerIndex_, begin() + writerIndex_, newBuffer.begin() + kCheapPrepend);
+            }
+            
+            buffer_ = std::move(newBuffer);
+            readerIndex_ = kCheapPrepend;
+            writerIndex_ = readerIndex_ + readable;
         }
     }
+    
+    static const char kCRLF[];
     
     std::vector<char> buffer_;
     size_t readerIndex_;

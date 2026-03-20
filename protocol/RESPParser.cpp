@@ -98,8 +98,9 @@ ParseResult RESPParser::parseSimpleString(const std::string& data, size_t& pos) 
     std::string value = data.substr(pos, crlf_pos - pos);
     current_value_ = makeSimpleString(value);
     
+    size_t total_processed = crlf_pos + 2 - pos;
     pos = crlf_pos + 2;
-    processed_bytes_ += (crlf_pos - pos + 2);
+    processed_bytes_ += total_processed;
     
     // 检查是否在数组中
     if (!array_stack_.empty()) {
@@ -131,8 +132,9 @@ ParseResult RESPParser::parseError(const std::string& data, size_t& pos) {
     std::string message = data.substr(pos, crlf_pos - pos);
     current_value_ = makeError(message);
     
+    size_t total_processed = crlf_pos + 2 - pos;
     pos = crlf_pos + 2;
-    processed_bytes_ += (crlf_pos - pos + 2);
+    processed_bytes_ += total_processed;
     
     // 检查是否在数组中
     if (!array_stack_.empty()) {
@@ -168,8 +170,9 @@ ParseResult RESPParser::parseInteger(const std::string& data, size_t& pos) {
     
     current_value_ = makeInteger(value);
     
+    size_t total_processed = crlf_pos + 2 - pos;
     pos = crlf_pos + 2;
-    processed_bytes_ += (crlf_pos - pos + 2);
+    processed_bytes_ += total_processed;
     
     // 检查是否在数组中
     if (!array_stack_.empty()) {
@@ -204,8 +207,9 @@ ParseResult RESPParser::parseBulkStringSize(const std::string& data, size_t& pos
     }
     
     bulk_size_ = size;
+    size_t total_processed = crlf_pos + 2 - pos;
     pos = crlf_pos + 2;
-    processed_bytes_ += (crlf_pos - pos + 2);
+    processed_bytes_ += total_processed;
     
     if (size == -1) {
         // 空批量字符串
@@ -301,8 +305,9 @@ ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
         return ParseResult::makeError("Invalid array size");
     }
     
+    size_t total_processed = crlf_pos + 2 - pos;
     pos = crlf_pos + 2;
-    processed_bytes_ += (crlf_pos - pos + 2);
+    processed_bytes_ += total_processed;
     
     if (size == -1) {
         // 空数组

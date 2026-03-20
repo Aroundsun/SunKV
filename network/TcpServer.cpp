@@ -33,8 +33,10 @@ TcpServer::~TcpServer() {
             for (auto& conn : connections_) {
                 TcpConnectionPtr connPtr = conn.second;
                 conn.second.reset();
-                connPtr->getLoop()->runInLoop(
-                    std::bind(&TcpConnection::connectDestroyed, connPtr));
+                if (connPtr && connPtr->getLoop()) {
+                    connPtr->getLoop()->runInLoop(
+                        std::bind(&TcpConnection::connectDestroyed, connPtr));
+                }
             }
             connections_.clear();
         });
