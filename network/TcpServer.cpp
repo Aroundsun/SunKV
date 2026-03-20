@@ -27,15 +27,17 @@ TcpServer::TcpServer(EventLoop* loop, const std::string& name, const std::string
 TcpServer::~TcpServer() {
     // 不在这里调用 assertInLoopThread，因为 TcpServer 可能在不同线程中析构
     // 将清理工作移到事件循环线程中执行
-    // 如果 EventLoop 还在运行，就清理连接；如果已经在析构，就跳过
     if (loop_ && !loop_->isDestructing()) {
-        // 直接清理连接，避免跨线程调用
-        for (auto& conn : connections_) {
-            TcpConnectionPtr connPtr = conn.second;
-            conn.second.reset();
-            // 不调用 connectDestroyed，避免跨线程问题
-        }
-        connections_.clear();
+        // 在事件循环线程中清理连接
+        loop_->runInLoop([this]() {
+            for (auto& conn : connections_) {
+                TcpConnectionPtr connPtr = conn.second;
+                conn.second.reset();
+                connPtr->getLoop()->runInLoop(
+                    std::bind(&TcpConnection::connectDestroyed, connPtr));
+            }
+            connections_.clear();
+        });
     }
 }
 

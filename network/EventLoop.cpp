@@ -1,7 +1,6 @@
 #include "EventLoop.h"
 #include "Poller.h"
-#include "Channel.h"
-#include "TimerQueue.h"
+#include "network/logger.h"
 #include <unistd.h>
 #include <sys/eventfd.h>
 #include <errno.h>
@@ -111,7 +110,10 @@ void EventLoop::wakeup() {
     uint64_t one = 1;
     ssize_t n = write(wakeupFd_, &one, sizeof(one));
     if (n != sizeof(one)) {
-        LOG_ERROR("EventLoop::wakeup() writes {} bytes instead of 8", n);
+        // 只在真正的错误时记录日志，忽略 EAGAIN
+        if (n != -1 || errno != EAGAIN) {
+            LOG_ERROR("EventLoop::wakeup() writes {} bytes instead of 8, errno: {}", n, errno);
+        }
     }
 }
 
