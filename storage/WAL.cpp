@@ -381,7 +381,22 @@ void WALReader::close() {
 std::unique_ptr<WALLogEntry> WALReader::read_next_entry() {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    if (!file_stream_.is_open() || eof()) {
+    if (!file_stream_.is_open()) {
+        return nullptr;
+    }
+    
+    // 检查文件位置，防止读取超出文件末尾
+    auto current_pos = file_stream_.tellg();
+    file_stream_.seekg(0, std::ios::end);
+    auto file_size = file_stream_.tellg();
+    file_stream_.seekg(current_pos);
+    
+    if (current_pos >= file_size) {
+        return nullptr;
+    }
+    
+    // 检查是否还有足够的数据读取头部
+    if (file_size - current_pos < sizeof(WALHeader)) {
         return nullptr;
     }
     

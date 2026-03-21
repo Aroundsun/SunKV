@@ -306,6 +306,17 @@ elseif(BUILD_TEST)
     
     add_test(NAME StorageEngineTest COMMAND storage_engine_test)
     
+    add_executable(debug_reader_test tmp/debug_reader_test.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(debug_reader_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
     add_executable(wal_test test/wal_test.cpp
         storage/WAL.cpp
         ${STORAGE_SOURCES}
