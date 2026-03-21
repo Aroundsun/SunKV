@@ -332,4 +332,36 @@ elseif(BUILD_TEST)
     )
     
     add_test(NAME SnapshotTest COMMAND snapshot_test)
+    
+    # Recovery tests
+    add_executable(recovery_test test/recovery_test.cpp
+        storage/Recovery.cpp
+        storage/Snapshot.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(recovery_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME RecoveryTest COMMAND recovery_test)
+    
+    # Persistence tests
+    add_executable(persistence_test test/persistence_test.cpp
+        storage/Recovery.cpp
+        storage/Snapshot.cpp
+        storage/WAL.cpp
+        storage/StorageEngine.cpp
+        storage/ShardedKVStore.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(persistence_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+    
+    add_test(NAME PersistenceTest COMMAND persistence_test)
 endif()
