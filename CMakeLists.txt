@@ -306,17 +306,7 @@ elseif(BUILD_TEST)
     
     add_test(NAME StorageEngineTest COMMAND storage_engine_test)
     
-    add_executable(debug_reader_test tmp/debug_reader_test.cpp
-        storage/WAL.cpp
-        storage/StorageEngine.cpp
-        storage/ShardedKVStore.cpp
-        network/logger.cpp
-    )
-    target_link_libraries(debug_reader_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
+    # WAL tests
     add_executable(wal_test test/wal_test.cpp
         storage/WAL.cpp
         ${STORAGE_SOURCES}
@@ -329,36 +319,17 @@ elseif(BUILD_TEST)
     
     add_test(NAME WALTest COMMAND wal_test)
     
-    add_executable(persistence_test tmp/persistence_test.cpp
-        storage/WAL.cpp
+    # Snapshot tests
+    add_executable(snapshot_test test/snapshot_test.cpp
+        storage/Snapshot.cpp
         storage/StorageEngine.cpp
         storage/ShardedKVStore.cpp
         network/logger.cpp
     )
-    target_link_libraries(persistence_test 
+    target_link_libraries(snapshot_test 
         Threads::Threads
         spdlog::spdlog
     )
     
-    add_executable(simple_persistence_test tmp/simple_persistence_test.cpp
-        storage/WAL.cpp
-        storage/StorageEngine.cpp
-        storage/ShardedKVStore.cpp
-        network/logger.cpp
-    )
-    target_link_libraries(simple_persistence_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    add_executable(quick_recovery_test tmp/quick_recovery_test.cpp
-        storage/WAL.cpp
-        storage/StorageEngine.cpp
-        storage/ShardedKVStore.cpp
-        network/logger.cpp
-    )
-    target_link_libraries(quick_recovery_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
+    add_test(NAME SnapshotTest COMMAND snapshot_test)
 endif()
