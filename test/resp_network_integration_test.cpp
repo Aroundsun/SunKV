@@ -108,7 +108,7 @@ int main() {
         std::cout << "  echo '*1\\r\\n$3\\r\\nGET\\r\\nkey\\r\\n' | nc 127.0.0.1 8088" << std::endl;
         std::cout << "Server will run for 8 seconds..." << std::endl;
         
-        // 启动服务器
+        // 直接在事件循环线程中启动服务器
         server->start();
         
         // 8秒后停止服务器
@@ -121,7 +121,8 @@ int main() {
         loop->loop();
         LOG_INFO("Event loop thread ended");
         
-        // 在事件循环线程中删除 EventLoop
+        // 在事件循环线程中删除对象
+        server.reset();
         delete loop;
         loop = nullptr;
     });

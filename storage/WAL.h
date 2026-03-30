@@ -101,7 +101,9 @@ private:
     std::atomic<uint64_t> sequence_number_;
     bool sync_mode_;
     
-    mutable std::mutex mutex_;
+    // 确保互斥锁正确对齐
+    alignas(std::mutex) mutable std::mutex mutex_;
+    std::atomic<bool> destructing_{false};  // 析构标志
     
     // 统计信息
     mutable std::atomic<uint64_t> total_entries_;
@@ -241,16 +243,17 @@ public:
 private:
     std::string wal_dir_;
     size_t max_file_size_;
-    std::unique_ptr<WALWriter> current_writer_;
-    std::atomic<uint64_t> current_sequence_;
+    uint64_t current_sequence_;
     bool in_transaction_;
     
     mutable std::mutex mutex_;
+    std::atomic<bool> destructing_{false};  // 析构标志
+    std::unique_ptr<WALWriter> current_writer_;
     
     // 统计信息
     mutable std::atomic<uint64_t> total_entries_;
     mutable std::atomic<uint64_t> total_files_;
-    mutable std::atomic<size_t> total_size_;
+    mutable std::atomic<uint64_t> total_size_;
     mutable std::atomic<uint64_t> write_ops_;
     mutable std::atomic<uint64_t> read_ops_;
     mutable std::atomic<uint64_t> flush_ops_;

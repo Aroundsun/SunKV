@@ -21,11 +21,11 @@ int main() {
         // 在事件循环线程中创建 EventLoop
         loop = new EventLoop();
         
-        // 创建 TCP 服务器
-        TcpServer server(loop, "TestServer", "127.0.0.1", 8080);
+        // 创建 TCP 服务器（在事件循环线程中）
+        TcpServer* server = new TcpServer(loop, "TestServer", "127.0.0.1", 8080);
         
         // 设置连接回调
-        server.setConnectionCallback([](const std::shared_ptr<TcpConnection>& conn) {
+        server->setConnectionCallback([](const std::shared_ptr<TcpConnection>& conn) {
             if (conn->connected()) {
                 LOG_INFO("New connection from {}", conn->peerAddress());
                 std::cout << "✓ New connection established: " << conn->peerAddress() << std::endl;
@@ -40,7 +40,7 @@ int main() {
         });
         
         // 设置消息回调
-        server.setMessageCallback([](const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
+        server->setMessageCallback([](const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
             std::string message(static_cast<char*>(data), len);
             LOG_INFO("Received {} bytes from {}: {}", len, conn->peerAddress(), message);
             std::cout << "✓ Received from " << conn->peerAddress() << ": " << message;
@@ -51,7 +51,7 @@ int main() {
         });
         
         // 设置写入完成回调
-        server.setWriteCompleteCallback([](const std::shared_ptr<TcpConnection>& conn) {
+        server->setWriteCompleteCallback([](const std::shared_ptr<TcpConnection>& conn) {
             LOG_DEBUG("Write complete for {}", conn->peerAddress());
         });
         
@@ -60,7 +60,7 @@ int main() {
         std::cout << "Server will run for 10 seconds..." << std::endl;
         
         // 启动服务器
-        server.start();
+        server->start();
         
         // 10秒后停止服务器
         loop->runAfter(std::chrono::seconds(10), [loop]() {
@@ -72,7 +72,8 @@ int main() {
         loop->loop();
         LOG_INFO("Event loop thread ended");
         
-        // 在事件循环线程中删除 EventLoop
+        // 在事件循环线程中删除对象
+        delete server;
         delete loop;
         loop = nullptr;
     });

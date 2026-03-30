@@ -178,14 +178,16 @@ int EventLoop::createEventfd() {
 }
 
 void EventLoop::assertInLoopThread() const {
-    if (!isInLoopThread()) {
+    // 在构造函数和析构函数中不要检查线程
+    if (!isInLoopThread() && looping_) {
         std::ostringstream oss1, oss2, oss3;
         oss1 << threadId_;
         oss2 << threadId_;
         oss3 << std::this_thread::get_id();
         LOG_ERROR("EventLoop::assertInLoopThread() - EventLoop {} was created in thread {} but current thread is {}", 
                  oss1.str(), oss2.str(), oss3.str());
-        exit(1);
+        // 不要调用 exit(1)，而是抛出异常
+        throw std::runtime_error("EventLoop called from wrong thread");
     }
 }
 

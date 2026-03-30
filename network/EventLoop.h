@@ -9,10 +9,9 @@
 #include <sys/eventfd.h>
 #include <chrono>
 #include "logger.h"
-
-class Channel;
-class Poller;
-class TimerQueue;
+#include "Channel.h"
+#include "Poller.h"
+#include "TimerQueue.h"
 
 class EventLoop {
 public:

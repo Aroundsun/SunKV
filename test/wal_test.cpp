@@ -565,26 +565,23 @@ int main() {
     std::cout << "=== WAL Comprehensive Test Suite ===" << std::endl;
     
     try {
-        // 运行基础测试（跳过 WALManager 测试）
         WALTester::testWALLogEntry();
         WALTester::testWALWriter();
         WALTester::testWALReader();
-        // WALTester::testWALManager();  // 暂时跳过
-        // WALTester::testWALRecovery();  // 暂时跳过
-        // WALTester::testConcurrentWAL();  // 并发测试有问题，暂时跳过
-        WALTester::testWALPerformance();  // 启用性能测试
-        // WALTester::testWALFileRotation();  // 暂时跳过
+        WALTester::testWALPerformance();
+        WALTester::testWALFileRotation();
+        WALTester::testWALRecovery();
+        WALTester::testConcurrentWAL();
         
-        std::cout << "\n🎉 BASIC WAL TESTS PASSED! 🎉" << std::endl;
-        std::cout << "WAL basic functionality is working!" << std::endl;
+        std::cout << "\n🎉 ALL WAL TESTS PASSED! 🎉" << std::endl;
+        std::cout << "WAL functionality is working correctly!" << std::endl;
         
+        return 0;
     } catch (const std::exception& e) {
-        std::cerr << "❌ WAL test failed with exception: " << e.what() << std::endl;
+        std::cerr << "Test failed with exception: " << e.what() << std::endl;
         return 1;
     } catch (...) {
         std::cerr << "❌ WAL test failed with unknown exception" << std::endl;
         return 1;
     }
-    
-    return 0;
 }

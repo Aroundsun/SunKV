@@ -139,10 +139,7 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
     
     // 如果还有数据未发送，放入输出缓冲区
     if (!faultError && remaining > 0) {
-        size_t oldLen = outputBuffer_.readableBytes();
-        if (oldLen + remaining >= outputBuffer_.writableBytes()) {
-            outputBuffer_.ensureWritableBytes(remaining);
-        }
+        // append 方法会自动处理空间不足的情况
         outputBuffer_.append(static_cast<const char*>(data) + nwrote, remaining);
         
         if (!channel_->isWriting()) {

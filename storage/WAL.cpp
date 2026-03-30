@@ -202,7 +202,12 @@ WALWriter::WALWriter(const std::string& file_path, size_t buffer_size)
 }
 
 WALWriter::~WALWriter() {
-    close();
+    destructing_ = true;
+    try {
+        close();
+    } catch (...) {
+        // 析构函数中不应该抛出异常
+    }
 }
 
 bool WALWriter::open() {
@@ -235,6 +240,11 @@ bool WALWriter::open() {
 }
 
 void WALWriter::close() {
+    // 检查是否已经关闭，避免重复关闭
+    if (!file_stream_.is_open()) {
+        return;
+    }
+    
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (file_stream_.is_open()) {
@@ -244,6 +254,11 @@ void WALWriter::close() {
 }
 
 bool WALWriter::write_entry(const WALLogEntry& entry) {
+    // 检查是否正在析构
+    if (destructing_.load()) {
+        return false;
+    }
+    
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (!file_stream_.is_open()) {
@@ -579,8 +594,14 @@ WALManager::WALManager(const std::string& wal_dir, size_t max_file_size)
 }
 
 WALManager::~WALManager() {
-    if (current_writer_) {
-        current_writer_->close();
+    destructing_ = true;
+    try {
+        if (current_writer_) {
+            current_writer_->close();
+            current_writer_.reset();
+        }
+    } catch (...) {
+        // 析构函数中不应该抛出异常
     }
 }
 
@@ -626,6 +647,16 @@ bool WALManager::initialize() {
 bool WALManager::write_set(const std::string& key, const std::string& value, int64_t ttl_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    // 检查是否正在析构
+    if (destructing_.load()) {
+        return false;
+    }
+    
+    // 检查 current_writer_ 是否有效
+    if (!current_writer_) {
+        return false;
+    }
+    
     WALLogEntry entry;
     entry.operation = WALOperationType::SET;
     entry.key = key;
@@ -636,11 +667,22 @@ bool WALManager::write_set(const std::string& key, const std::string& value, int
     
     write_ops_++;
     
+    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
     return current_writer_->write_entry(entry);
 }
 
 bool WALManager::write_del(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 检查是否正在析构
+    if (destructing_.load()) {
+        return false;
+    }
+    
+    // 检查 current_writer_ 是否有效
+    if (!current_writer_) {
+        return false;
+    }
     
     WALLogEntry entry;
     entry.operation = WALOperationType::DEL;
@@ -650,11 +692,22 @@ bool WALManager::write_del(const std::string& key) {
     
     write_ops_++;
     
+    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
     return current_writer_->write_entry(entry);
 }
 
 bool WALManager::write_clear() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 检查是否正在析构
+    if (destructing_.load()) {
+        return false;
+    }
+    
+    // 检查 current_writer_ 是否有效
+    if (!current_writer_) {
+        return false;
+    }
     
     WALLogEntry entry;
     entry.operation = WALOperationType::CLEAR;
@@ -663,6 +716,7 @@ bool WALManager::write_clear() {
     
     write_ops_++;
     
+    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
     return current_writer_->write_entry(entry);
 }
 
