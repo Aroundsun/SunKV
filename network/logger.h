@@ -14,6 +14,10 @@ public:
     
     std::shared_ptr<spdlog::logger> getLogger() const;
     
+    // 新增方法
+    void setLevelFromName(const std::string& level_name);
+    void setFile(const std::string& filename);
+    
 private:
     Logger();
     std::shared_ptr<spdlog::logger> logger_;

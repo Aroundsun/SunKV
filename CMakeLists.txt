@@ -65,26 +65,23 @@ set(NETWORK_SOURCES
 
 # 协议模块源文件
 set(PROTOCOL_SOURCES
-    protocol/RESPType.cpp                 # RESP 协议类型定义
-    protocol/RESPParser.cpp               # RESP 协议解析器
+    protocol/RESPParser.cpp                 # RESP 协议解析器
+    protocol/RESPType.cpp                   # RESP 数据类型
+    protocol/RESPSerializer.cpp              # RESP 协议序列化器
 )
 
 # 命令模块源文件
 set(COMMAND_SOURCES
     command/Command.cpp                   # 命令基类
-    command/CommandDispatcher.cpp         # 命令分发器
-    command/commands/PingCommand.cpp      # PING 命令实现
-    command/commands/EchoCommand.cpp      # ECHO 命令实现
-    command/commands/SetCommand.cpp        # SET 命令实现
-    command/commands/GetCommand.cpp        # GET 命令实现
-    command/commands/DelCommand.cpp       # DEL 命令实现
-    command/commands/ExistsCommand.cpp    # EXISTS 命令实现
+    command/CommandRegistry.cpp           # 命令注册表
 )
 
 # 存储模块源文件
 set(STORAGE_SOURCES
     storage/StorageEngine.cpp             # 存储引擎核心
     storage/ShardedKVStore.cpp            # 分片 KV 存储
+    storage/WAL.cpp                        # 预写日志
+    storage/Snapshot.cpp                  # 快照管理
 )
 
 # 持久化模块源文件
@@ -94,7 +91,9 @@ set(PERSISTENCE_SOURCES
 
 # 服务器模块源文件
 set(SERVER_SOURCES
-    server/main.cpp                       # 服务器主程序入口
+    server/Server.cpp                      # 服务器主类
+    server/Config.cpp                      # 配置管理
+    server/main.cpp                         # 服务器主程序入口
 )
 
 # ============================================================================
@@ -106,6 +105,7 @@ add_executable(sunkv
     ${SERVER_SOURCES}                      # 服务器模块
     ${NETWORK_SOURCES}                     # 网络模块
     ${PROTOCOL_SOURCES}                    # 协议模块
+    ${COMMAND_SOURCES}                     # 命令模块
     ${STORAGE_SOURCES}                     # 存储模块
     ${PERSISTENCE_SOURCES}                 # 持久化模块
 )
@@ -114,6 +114,7 @@ add_executable(sunkv
 target_link_libraries(sunkv 
     Threads::Threads                       # 线程库
     spdlog::spdlog                         # 日志库
+    fmt::fmt                               # 格式化库
 )
 
 # ============================================================================
