@@ -1,21 +1,50 @@
 #pragma once
 
 #include <memory>
-#include <string>
-#include <thread>
 #include <atomic>
+#include <thread>
+#include <vector>
+#include <mutex>
+#include <map>
+#include <set>
+#include <unordered_map>
+#include <list>
 #include <functional>
-#include "network/EventLoop.h"
-#include "network/TcpServer.h"
-#include "network/TcpConnection.h"
-#include "network/EventLoopThreadPool.h"
-#include "protocol/RESPParser.h"
-#include "protocol/RESPSerializer.h"
-#include "command/CommandRegistry.h"
-#include "storage/StorageEngine.h"
-#include "storage/WAL.h"
-#include "storage/Snapshot.h"
-#include "network/logger.h"
+#include "../network/TcpServer.h"
+#include "../network/TcpConnection.h"
+#include "../network/EventLoop.h"
+#include "../network/EventLoopThreadPool.h"
+#include "../command/CommandRegistry.h"
+#include "../storage/StorageEngine.h"
+#include "../storage/WAL.h"
+#include "../storage/Snapshot.h"
+#include "../protocol/RESPType.h"
+#include "../protocol/RESPSerializer.h"
+#include "../protocol/RESPParser.h"
+#include "../network/logger.h"
+
+// 数据类型枚举
+enum class DataType {
+    STRING = 0,
+    LIST = 1,
+    SET = 2,
+    HASH = 3
+};
+
+// 多类型值结构
+struct DataValue {
+    DataType type;
+    std::string string_value;                    // STRING 类型
+    std::list<std::string> list_value;          // LIST 类型
+    std::set<std::string> set_value;            // SET 类型
+    std::map<std::string, std::string> hash_value; // HASH 类型
+    
+    DataValue() : type(DataType::STRING) {}
+    explicit DataValue(const std::string& val) : type(DataType::STRING), string_value(val) {}
+    explicit DataValue(const std::list<std::string>& val) : type(DataType::LIST), list_value(val) {}
+    explicit DataValue(const std::set<std::string>& val) : type(DataType::SET), set_value(val) {}
+    explicit DataValue(const std::map<std::string, std::string>& val) : type(DataType::HASH), hash_value(val) {}
+};
 
 // 前向声明
 class Config;
@@ -151,7 +180,11 @@ private:
     std::unique_ptr<WALManager> wal_manager_;          // WAL 管理器
     std::unique_ptr<SnapshotManager> snapshot_manager_; // 快照管理器
     
-    // 简单内存存储 (临时实现)
+    // 多类型内存存储
+    std::map<std::string, DataValue> multi_storage_;
+    std::mutex multi_storage_mutex_;
+    
+    // 简单内存存储 (临时实现，向后兼容)
     std::map<std::string, std::string> simple_storage_;
     std::mutex simple_storage_mutex_;
     

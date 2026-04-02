@@ -568,10 +568,457 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(simple_storage_mutex_);
                             simple_storage_.clear();
                         }
+                        {
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            multi_storage_.clear();
+                        }
                         auto ok = RESPSerializer::serializeSimpleString("OK");
                         conn->send(ok.data(), ok.size());
                         std::cerr << "DEBUG: FLUSHALL cleared all data" << std::endl;
                         return;
+                    }
+                    
+                    // List 命令
+                    if (cmd_name == "LPUSH" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto& data = multi_storage_[key];
+                            if (data.type != DataType::LIST && data.type != DataType::STRING) {
+                                auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+                                conn->send(error.data(), error.size());
+                                return;
+                            }
+                            
+                            // 如果是字符串类型，转换为列表
+                            if (data.type == DataType::STRING) {
+                                data.list_value.push_front(data.string_value);
+                                data.type = DataType::LIST;
+                            }
+                            
+                            for (size_t i = 2; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    data.list_value.push_front(value_bulk->getValue());
+                                }
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(data.list_value.size());
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: LPUSH " << key << " list size: " << data.list_value.size() << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "RPUSH" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto& data = multi_storage_[key];
+                            if (data.type != DataType::LIST && data.type != DataType::STRING) {
+                                auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+                                conn->send(error.data(), error.size());
+                                return;
+                            }
+                            
+                            // 如果是字符串类型，转换为列表
+                            if (data.type == DataType::STRING) {
+                                data.list_value.push_back(data.string_value);
+                                data.type = DataType::LIST;
+                            }
+                            
+                            for (size_t i = 2; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    data.list_value.push_back(value_bulk->getValue());
+                                }
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(data.list_value.size());
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: RPUSH " << key << " list size: " << data.list_value.size() << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "LPOP" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            if (it->second.list_value.empty()) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            std::string value = it->second.list_value.front();
+                            it->second.list_value.pop_front();
+                            
+                            auto response = RESPSerializer::serializeBulkString(value);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: LPOP " << key << " = " << value << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "RPOP" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            if (it->second.list_value.empty()) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            std::string value = it->second.list_value.back();
+                            it->second.list_value.pop_back();
+                            
+                            auto response = RESPSerializer::serializeBulkString(value);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: RPOP " << key << " = " << value << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "LLEN" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(it->second.list_value.size());
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: LLEN " << key << " = " << it->second.list_value.size() << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    // Set 命令
+                    if (cmd_name == "SADD" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto& data = multi_storage_[key];
+                            if (data.type != DataType::SET && data.type != DataType::STRING) {
+                                auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+                                conn->send(error.data(), error.size());
+                                return;
+                            }
+                            
+                            // 如果是字符串类型，转换为集合
+                            if (data.type == DataType::STRING) {
+                                data.set_value.insert(data.string_value);
+                                data.type = DataType::SET;
+                            }
+                            
+                            int added_count = 0;
+                            for (size_t i = 2; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    if (data.set_value.insert(value_bulk->getValue()).second) {
+                                        added_count++;
+                                    }
+                                }
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(added_count);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: SADD " << key << " added " << added_count << " members" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "SREM" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::SET) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int removed_count = 0;
+                            for (size_t i = 2; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    if (it->second.set_value.erase(value_bulk->getValue()) > 0) {
+                                        removed_count++;
+                                    }
+                                }
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(removed_count);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: SREM " << key << " removed " << removed_count << " members" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "SMEMBERS" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::SET) {
+                                std::string empty_array = "*0\r\n";
+                                conn->send(empty_array.data(), empty_array.size());
+                                return;
+                            }
+                            
+                            std::string members_array = "*" + std::to_string(it->second.set_value.size()) + "\r\n";
+                            for (const auto& member : it->second.set_value) {
+                                members_array += "$" + std::to_string(member.length()) + "\r\n" + member + "\r\n";
+                            }
+                            conn->send(members_array.data(), members_array.size());
+                            std::cerr << "DEBUG: SMEMBERS " << key << " returned " << it->second.set_value.size() << " members" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "SCARD" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::SET) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(it->second.set_value.size());
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: SCARD " << key << " = " << it->second.set_value.size() << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "SISMEMBER" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* member_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            std::string member = member_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::SET) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int is_member = it->second.set_value.count(member) > 0 ? 1 : 0;
+                            auto response = RESPSerializer::serializeInteger(is_member);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: SISMEMBER " << key << " " << member << " = " << is_member << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    // Hash 命令
+                    if (cmd_name == "HSET" && cmd_array.size() >= 4) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[3] && cmd_array[3]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* field_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[3].get());
+                            std::string key = key_bulk->getValue();
+                            std::string field = field_bulk->getValue();
+                            std::string value = value_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto& data = multi_storage_[key];
+                            if (data.type != DataType::HASH && data.type != DataType::STRING) {
+                                auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+                                conn->send(error.data(), error.size());
+                                return;
+                            }
+                            
+                            // 如果是字符串类型，转换为哈希
+                            if (data.type == DataType::STRING) {
+                                data.hash_value["value"] = data.string_value;
+                                data.type = DataType::HASH;
+                            }
+                            
+                            bool is_new_field = data.hash_value.find(field) == data.hash_value.end();
+                            data.hash_value[field] = value;
+                            
+                            auto response = RESPSerializer::serializeInteger(is_new_field ? 1 : 0);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: HSET " << key << " " << field << " = " << value << " (new: " << is_new_field << ")" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "HGET" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* field_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            std::string field = field_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            auto field_it = it->second.hash_value.find(field);
+                            if (field_it == it->second.hash_value.end()) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+                            
+                            auto response = RESPSerializer::serializeBulkString(field_it->second);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: HGET " << key << " " << field << " = " << field_it->second << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "HDEL" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int deleted_count = 0;
+                            for (size_t i = 2; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* field_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    if (it->second.hash_value.erase(field_bulk->getValue()) > 0) {
+                                        deleted_count++;
+                                    }
+                                }
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(deleted_count);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: HDEL " << key << " deleted " << deleted_count << " fields" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "HGETALL" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
+                                std::string empty_array = "*0\r\n";
+                                conn->send(empty_array.data(), empty_array.size());
+                                return;
+                            }
+                            
+                            std::string hash_array = "*" + std::to_string(it->second.hash_value.size() * 2) + "\r\n";
+                            for (const auto& pair : it->second.hash_value) {
+                                hash_array += "$" + std::to_string(pair.first.length()) + "\r\n" + pair.first + "\r\n";
+                                hash_array += "$" + std::to_string(pair.second.length()) + "\r\n" + pair.second + "\r\n";
+                            }
+                            conn->send(hash_array.data(), hash_array.size());
+                            std::cerr << "DEBUG: HGETALL " << key << " returned " << it->second.hash_value.size() << " fields" << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "HLEN" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            auto response = RESPSerializer::serializeInteger(it->second.hash_value.size());
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: HLEN " << key << " = " << it->second.hash_value.size() << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "HEXISTS" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* field_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            std::string field = field_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int exists = it->second.hash_value.count(field) > 0 ? 1 : 0;
+                            auto response = RESPSerializer::serializeInteger(exists);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: HEXISTS " << key << " " << field << " = " << exists << std::endl;
+                            return;
+                        }
                     }
                 }
             }
