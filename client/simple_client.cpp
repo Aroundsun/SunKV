@@ -1,12 +1,15 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <sstream>
 #include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <string>
+#include <vector>
+#include <iostream>
+#include <sstream>
 
 class SimpleRedisClient {
 private:
@@ -120,8 +123,20 @@ int main(int argc, char* argv[]) {
     if (argc > 3) {
         // 执行指定命令
         std::vector<std::string> args;
-        for (int i = 3; i < argc; i++) {
-            args.push_back(argv[i]);
+        
+        // 如果只有一个命令参数，需要按空格分割
+        if (argc == 4) {
+            std::string command = argv[3];
+            std::istringstream iss(command);
+            std::string token;
+            while (iss >> token) {
+                args.push_back(token);
+            }
+        } else {
+            // 多个参数，直接使用
+            for (int i = 3; i < argc; i++) {
+                args.push_back(argv[i]);
+            }
         }
         
         std::string cmd = create_resp_command(args);

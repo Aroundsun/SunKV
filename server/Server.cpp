@@ -367,24 +367,17 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         // 解析 RESP 命令
         std::cerr << "DEBUG: Parsing RESP message: " << message << std::endl;
         
-        // 简单检测 PING 命令
-        std::cerr << "DEBUG: Looking for PING in message..." << std::endl;
-        if (message.find("PING") != std::string::npos) {
-            std::cerr << "DEBUG: Detected PING command, sending PONG" << std::endl;
-            auto pong = RESPSerializer::serializeSimpleString("PONG");
-            conn->send(pong.data(), pong.size());
-            return;
-        }
-        std::cerr << "DEBUG: PING not found in message" << std::endl;
-        
+        // 使用真正的 RESP 解析器
         auto parser = std::make_unique<RESPParser>();
         auto result = parser->parse(message);
         
         std::cerr << "DEBUG: Parse result success=" << result.success << std::endl;
         std::cerr << "DEBUG: Parse result complete=" << result.complete << std::endl;
-        if (result.success && result.complete) {
-            std::cerr << "DEBUG: Calling processCommand" << std::endl;
+        
+        if (result.success && result.complete && result.value) {
+            std::cerr << "DEBUG: RESP parsing successful, processing command" << std::endl;
             processCommand(conn, result.value);
+            return;
         } else if (!result.complete) {
             std::cerr << "DEBUG: Parse incomplete, waiting for more data" << std::endl;
             return; // 等待更多数据
@@ -393,6 +386,15 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             // 发送错误响应
             auto error_resp = RESPSerializer::serializeError("Invalid RESP format: " + result.error);
             conn->send(error_resp.data(), error_resp.size());
+            return;
+        }
+        
+        // 如果 RESP 解析失败，尝试简单的字符串匹配 (备用方案)
+        if (message.find("PING") != std::string::npos) {
+            std::cerr << "DEBUG: Detected PING command, sending PONG" << std::endl;
+            auto pong = RESPSerializer::serializeSimpleString("PONG");
+            conn->send(pong.data(), pong.size());
+            return;
         }
     } catch (const std::exception& e) {
         LOG_ERROR("Error processing message from {}: {}", conn->peerAddress(), e.what());
@@ -412,24 +414,188 @@ void Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) {
 
 void Server::processCommand(const std::shared_ptr<TcpConnection>& conn, 
                         const RESPValue::Ptr& command) {
-    if (!command_registry_) {
-        auto error = RESPSerializer::serializeError("Command system not initialized");
+    if (!command) {
+        auto error = RESPSerializer::serializeError("Invalid command");
         conn->send(error.data(), error.size());
         return;
     }
     
     try {
-        // 执行命令
-        auto result = command_registry_->executeCommand(*command, *storage_engine_);
+        std::cerr << "DEBUG: Processing RESP command, type=" << (int)command->getType() << std::endl;
         
-        // 发送响应
-        sendResponse(conn, std::move(result));
-        
-        // 记录操作到 WAL
-        if (wal_manager_ && result.success) {
-            // 这里可以根据命令类型记录到 WAL
-            // 为了简化，暂时不实现具体的 WAL 记录
+        // 处理数组命令 (如 SET key value, GET key)
+        if (command->getType() == RESPType::ARRAY) {
+            auto* array_value = static_cast<RESPArray*>(command.get());
+            if (array_value && array_value->size() > 0) {
+                auto& cmd_array = array_value->getValues();
+                if (cmd_array[0] && cmd_array[0]->getType() == RESPType::BULK_STRING) {
+                    auto* bulk_string = static_cast<RESPBulkString*>(cmd_array[0].get());
+                    std::string cmd_name = bulk_string->getValue();
+                    std::cerr << "DEBUG: Command name: " << cmd_name << std::endl;
+                    
+                    if (cmd_name == "PING") {
+                        auto pong = RESPSerializer::serializeSimpleString("PONG");
+                        conn->send(pong.data(), pong.size());
+                        std::cerr << "DEBUG: PING response sent" << std::endl;
+                        return;
+                    }
+                    
+                    if (cmd_name == "SET" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[2] &&
+                            cmd_array[1]->getType() == RESPType::BULK_STRING && 
+                            cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            std::string value = value_bulk->getValue();
+                            
+                            {
+                                std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                                simple_storage_[key] = value;
+                            }
+                            
+                            auto ok = RESPSerializer::serializeSimpleString("OK");
+                            conn->send(ok.data(), ok.size());
+                            std::cerr << "DEBUG: SET " << key << "=" << value << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "GET" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::string value;
+                            bool found = false;
+                            {
+                                std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                                auto it = simple_storage_.find(key);
+                                if (it != simple_storage_.end()) {
+                                    value = it->second;
+                                    found = true;
+                                }
+                            }
+                            
+                            if (found) {
+                                auto response = RESPSerializer::serializeBulkString(value);
+                                conn->send(response.data(), response.size());
+                                std::cerr << "DEBUG: GET " << key << "=" << value << std::endl;
+                            } else {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                std::cerr << "DEBUG: GET " << key << " = nil" << std::endl;
+                            }
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "DEL" && cmd_array.size() >= 2) {
+                        int deleted_count = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            for (size_t i = 1; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    std::string key = key_bulk->getValue();
+                                    if (simple_storage_.erase(key) > 0) {
+                                        deleted_count++;
+                                        std::cerr << "DEBUG: DEL " << key << " (deleted)" << std::endl;
+                                    } else {
+                                        std::cerr << "DEBUG: DEL " << key << " (not found)" << std::endl;
+                                    }
+                                }
+                            }
+                        }
+                        auto response = RESPSerializer::serializeInteger(deleted_count);
+                        conn->send(response.data(), response.size());
+                        std::cerr << "DEBUG: DEL deleted " << deleted_count << " keys" << std::endl;
+                        return;
+                    }
+                    
+                    if (cmd_name == "EXISTS" && cmd_array.size() >= 2) {
+                        int exists_count = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            for (size_t i = 1; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    std::string key = key_bulk->getValue();
+                                    if (simple_storage_.find(key) != simple_storage_.end()) {
+                                        exists_count++;
+                                    }
+                                }
+                            }
+                        }
+                        auto response = RESPSerializer::serializeInteger(exists_count);
+                        conn->send(response.data(), response.size());
+                        std::cerr << "DEBUG: EXISTS found " << exists_count << " keys" << std::endl;
+                        return;
+                    }
+                    
+                    if (cmd_name == "KEYS") {
+                        std::string keys_array = "*";
+                        std::vector<std::string> keys;
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            for (const auto& pair : simple_storage_) {
+                                keys.push_back(pair.first);
+                            }
+                        }
+                        keys_array += std::to_string(keys.size()) + "\r\n";
+                        for (const auto& key : keys) {
+                            keys_array += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
+                        }
+                        conn->send(keys_array.data(), keys_array.size());
+                        std::cerr << "DEBUG: KEYS returned " << keys.size() << " keys" << std::endl;
+                        return;
+                    }
+                    
+                    if (cmd_name == "DBSIZE") {
+                        int64_t size = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            size = simple_storage_.size();
+                        }
+                        auto response = RESPSerializer::serializeInteger(size);
+                        conn->send(response.data(), response.size());
+                        std::cerr << "DEBUG: DBSIZE returned " << size << std::endl;
+                        return;
+                    }
+                    
+                    if (cmd_name == "FLUSHALL") {
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            simple_storage_.clear();
+                        }
+                        auto ok = RESPSerializer::serializeSimpleString("OK");
+                        conn->send(ok.data(), ok.size());
+                        std::cerr << "DEBUG: FLUSHALL cleared all data" << std::endl;
+                        return;
+                    }
+                }
+            }
         }
+        
+        // 处理简单字符串命令
+        if (command->getType() == RESPType::SIMPLE_STRING) {
+            auto* simple_string = static_cast<RESPSimpleString*>(command.get());
+            if (simple_string) {
+                std::string cmd = simple_string->toString();
+                std::cerr << "DEBUG: Simple string command: " << cmd << std::endl;
+                
+                if (cmd == "PING") {
+                    auto pong = RESPSerializer::serializeSimpleString("PONG");
+                    conn->send(pong.data(), pong.size());
+                    return;
+                }
+            }
+        }
+        
+        // 如果不支持的命令，返回错误
+        auto error = RESPSerializer::serializeError("Unsupported command");
+        conn->send(error.data(), error.size());
+        std::cerr << "DEBUG: Unsupported command" << std::endl;
         
     } catch (const std::exception& e) {
         LOG_ERROR("Error executing command: {}", e.what());

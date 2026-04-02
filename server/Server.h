@@ -151,6 +151,10 @@ private:
     std::unique_ptr<WALManager> wal_manager_;          // WAL 管理器
     std::unique_ptr<SnapshotManager> snapshot_manager_; // 快照管理器
     
+    // 简单内存存储 (临时实现)
+    std::map<std::string, std::string> simple_storage_;
+    std::mutex simple_storage_mutex_;
+    
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态
     
