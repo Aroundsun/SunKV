@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <list>
 #include <functional>
+#include <chrono>
+#include <iostream>
 #include "../network/TcpServer.h"
 #include "../network/TcpConnection.h"
 #include "../network/EventLoop.h"
@@ -31,6 +33,10 @@ enum class DataType {
     HASH = 3
 };
 
+// TTL 相关常量
+constexpr int64_t NO_TTL = -1;  // 永不过期
+constexpr int64_t TTL_EXPIRED = -2;  // 已过期
+
 // 多类型值结构
 struct DataValue {
     DataType type;
@@ -39,11 +45,47 @@ struct DataValue {
     std::set<std::string> set_value;            // SET 类型
     std::map<std::string, std::string> hash_value; // HASH 类型
     
-    DataValue() : type(DataType::STRING) {}
-    explicit DataValue(const std::string& val) : type(DataType::STRING), string_value(val) {}
-    explicit DataValue(const std::list<std::string>& val) : type(DataType::LIST), list_value(val) {}
-    explicit DataValue(const std::set<std::string>& val) : type(DataType::SET), set_value(val) {}
-    explicit DataValue(const std::map<std::string, std::string>& val) : type(DataType::HASH), hash_value(val) {}
+    // TTL 支持
+    int64_t ttl_seconds;                         // TTL 秒数，-1 表示永不过期
+    std::chrono::steady_clock::time_point created_time;  // 创建时间
+    std::chrono::steady_clock::time_point ttl_set_time;   // TTL 设置时间
+    
+    DataValue() : type(DataType::STRING), ttl_seconds(NO_TTL), created_time(std::chrono::steady_clock::now()), ttl_set_time(created_time) {}
+    explicit DataValue(const std::string& val) : type(DataType::STRING), string_value(val), ttl_seconds(NO_TTL), created_time(std::chrono::steady_clock::now()), ttl_set_time(created_time) {}
+    explicit DataValue(const std::list<std::string>& val) : type(DataType::LIST), list_value(val), ttl_seconds(NO_TTL), created_time(std::chrono::steady_clock::now()), ttl_set_time(created_time) {}
+    explicit DataValue(const std::set<std::string>& val) : type(DataType::SET), set_value(val), ttl_seconds(NO_TTL), created_time(std::chrono::steady_clock::now()), ttl_set_time(created_time) {}
+    explicit DataValue(const std::map<std::string, std::string>& val) : type(DataType::HASH), hash_value(val), ttl_seconds(NO_TTL), created_time(std::chrono::steady_clock::now()), ttl_set_time(created_time) {}
+    
+    // 检查是否过期
+    bool isExpired() const {
+        if (ttl_seconds == NO_TTL) {
+            return false;
+        }
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - ttl_set_time);
+        return elapsed.count() >= ttl_seconds;
+    }
+    
+    // 获取剩余 TTL 秒数
+    int64_t getRemainingTTL() const {
+        if (ttl_seconds == NO_TTL) {
+            return NO_TTL;
+        }
+        if (isExpired()) {
+            return TTL_EXPIRED;
+        }
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - ttl_set_time);
+        return ttl_seconds - elapsed.count();
+    }
+    
+    // 设置 TTL
+    void setTTL(int64_t ttl) {
+        ttl_seconds = ttl;
+        if (ttl > 0) {
+            ttl_set_time = std::chrono::steady_clock::now();
+        }
+    }
 };
 
 // 前向声明
@@ -169,6 +211,16 @@ private:
      * @brief 更新统计信息
      */
     void updateStats();
+    
+    /**
+     * @brief TTL 清理线程函数
+     */
+    void ttlCleanupThread();
+    
+    /**
+     * @brief 清理过期的键
+     */
+    void cleanupExpiredKeys();
 
 private:
     std::unique_ptr<Config> config_;                    // 配置对象
@@ -191,11 +243,17 @@ private:
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态
     
+    // TTL 清理相关
+    std::thread ttl_cleanup_thread_;                  // TTL 清理线程
+    std::atomic<bool> ttl_cleanup_running_{false};     // TTL 清理线程运行状态
+    static constexpr int TTL_CLEANUP_INTERVAL_SECONDS = 5;  // 清理间隔（秒）
+    
     // 统计信息
     mutable std::mutex stats_mutex_;
     std::atomic<uint64_t> total_connections_{0};
     std::atomic<uint64_t> current_connections_{0};
     std::atomic<uint64_t> total_commands_{0};
+    std::atomic<uint64_t> expired_keys_cleaned_{0};   // 清理的过期键计数
     std::atomic<uint64_t> total_operations_{0};
     std::chrono::steady_clock::time_point start_time_;
     

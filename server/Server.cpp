@@ -115,6 +115,10 @@ bool Server::start() {
     running_.store(true);
     stopping_.store(false);
     
+    // 暂时禁用 TTL 清理线程，只使用被动清理
+    // ttl_cleanup_running_.store(true);
+    // ttl_cleanup_thread_ = std::thread(&Server::ttlCleanupThread, this);
+    
     LOG_INFO("SunKV Server started successfully");
     LOG_INFO("Listening on {}:{}", config_->bind_address, config_->bind_port);
     LOG_INFO("Thread pool size: {}", config_->thread_pool_size);
@@ -135,6 +139,12 @@ void Server::stop() {
     
     LOG_INFO("Stopping SunKV Server...");
     stopping_.store(true);
+    
+    // 停止 TTL 清理线程
+    ttl_cleanup_running_.store(false);
+    if (ttl_cleanup_thread_.joinable()) {
+        ttl_cleanup_thread_.join();
+    }
     
     // 优雅关闭
     gracefulShutdown();
@@ -436,22 +446,20 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "PING") {
                         auto pong = RESPSerializer::serializeSimpleString("PONG");
                         conn->send(pong.data(), pong.size());
-                        std::cerr << "DEBUG: PING response sent" << std::endl;
                         return;
                     }
                     
                     if (cmd_name == "SET" && cmd_array.size() >= 3) {
-                        if (cmd_array[1] && cmd_array[2] &&
-                            cmd_array[1]->getType() == RESPType::BULK_STRING && 
-                            cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING && 
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
                             std::string key = key_bulk->getValue();
                             std::string value = value_bulk->getValue();
                             
                             {
-                                std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                                simple_storage_[key] = value;
+                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                                multi_storage_[key] = DataValue(value);  // 创建新的字符串值，默认无 TTL
                             }
                             
                             auto ok = RESPSerializer::serializeSimpleString("OK");
@@ -466,26 +474,22 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::string value;
-                            bool found = false;
-                            {
-                                std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                                auto it = simple_storage_.find(key);
-                                if (it != simple_storage_.end()) {
-                                    value = it->second;
-                                    found = true;
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::STRING || it->second.isExpired()) {
+                                if (it != multi_storage_.end() && it->second.isExpired()) {
+                                    multi_storage_.erase(it);  // 删除过期键
+                                    expired_keys_cleaned_++;
                                 }
-                            }
-                            
-                            if (found) {
-                                auto response = RESPSerializer::serializeBulkString(value);
-                                conn->send(response.data(), response.size());
-                                std::cerr << "DEBUG: GET " << key << "=" << value << std::endl;
-                            } else {
                                 auto nil = RESPSerializer::serializeNullBulkString();
                                 conn->send(nil.data(), nil.size());
                                 std::cerr << "DEBUG: GET " << key << " = nil" << std::endl;
+                                return;
                             }
+                            
+                            auto response = RESPSerializer::serializeBulkString(it->second.string_value);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: GET " << key << "=" << it->second.string_value << std::endl;
                             return;
                         }
                     }
@@ -710,7 +714,11 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
-                            if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
+                            if (it == multi_storage_.end() || it->second.type != DataType::LIST || it->second.isExpired()) {
+                                if (it != multi_storage_.end() && it->second.isExpired()) {
+                                    multi_storage_.erase(it);  // 删除过期键
+                                    expired_keys_cleaned_++;
+                                }
                                 auto response = RESPSerializer::serializeInteger(0);
                                 conn->send(response.data(), response.size());
                                 return;
@@ -1020,6 +1028,111 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             return;
                         }
                     }
+                    
+                    // TTL 命令
+                    if (cmd_name == "EXPIRE" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* ttl_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            try {
+                                int64_t ttl_seconds = std::stoll(ttl_bulk->getValue());
+                                
+                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                                auto it = multi_storage_.find(key);
+                                if (it == multi_storage_.end()) {
+                                    auto response = RESPSerializer::serializeInteger(0);
+                                    conn->send(response.data(), response.size());
+                                    return;
+                                }
+                                
+                                it->second.setTTL(ttl_seconds);
+                                auto response = RESPSerializer::serializeInteger(1);
+                                conn->send(response.data(), response.size());
+                                std::cerr << "DEBUG: EXPIRE " << key << " " << ttl_seconds << " completed" << std::endl;
+                                return;
+                            } catch (const std::exception& e) {
+                                auto error = RESPSerializer::serializeError("Invalid TTL value");
+                                conn->send(error.data(), error.size());
+                                return;
+                            }
+                        }
+                    }
+                    
+                    if (cmd_name == "TTL" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end()) {
+                                auto response = RESPSerializer::serializeInteger(-2);  // key 不存在
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int64_t remaining_ttl = it->second.getRemainingTTL();
+                            auto response = RESPSerializer::serializeInteger(remaining_ttl);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: TTL " << key << " = " << remaining_ttl << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "PTTL" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end()) {
+                                auto response = RESPSerializer::serializeInteger(-2);  // key 不存在
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            int64_t remaining_ttl = it->second.getRemainingTTL();
+                            if (remaining_ttl == NO_TTL) {
+                                auto response = RESPSerializer::serializeInteger(-1);  // 永不过期
+                                conn->send(response.data(), response.size());
+                            } else if (remaining_ttl == TTL_EXPIRED) {
+                                auto response = RESPSerializer::serializeInteger(-2);  // 已过期
+                                conn->send(response.data(), response.size());
+                            } else {
+                                // 转换为毫秒
+                                auto response = RESPSerializer::serializeInteger(remaining_ttl * 1000);
+                                conn->send(response.data(), response.size());
+                            }
+                            std::cerr << "DEBUG: PTTL " << key << " = " << remaining_ttl * 1000 << std::endl;
+                            return;
+                        }
+                    }
+                    
+                    if (cmd_name == "PERSIST" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+                            
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end()) {
+                                auto response = RESPSerializer::serializeInteger(0);
+                                conn->send(response.data(), response.size());
+                                return;
+                            }
+                            
+                            bool had_ttl = it->second.ttl_seconds != NO_TTL;
+                            it->second.setTTL(NO_TTL);
+                            auto response = RESPSerializer::serializeInteger(had_ttl ? 1 : 0);
+                            conn->send(response.data(), response.size());
+                            std::cerr << "DEBUG: PERSIST " << key << " = " << (had_ttl ? 1 : 0) << std::endl;
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -1074,6 +1187,40 @@ void Server::sendResponse(const std::shared_ptr<TcpConnection>& conn, const Comm
     }
 }
 
+void Server::ttlCleanupThread() {
+    std::cerr << "DEBUG: TTL cleanup thread started" << std::endl;
+    
+    while (ttl_cleanup_running_) {
+        try {
+            cleanupExpiredKeys();
+        } catch (const std::exception& e) {
+            std::cerr << "ERROR: TTL cleanup thread error: " << e.what() << std::endl;
+        }
+        
+        // 每5秒清理一次
+        std::this_thread::sleep_for(std::chrono::seconds(TTL_CLEANUP_INTERVAL_SECONDS));
+    }
+    
+    std::cerr << "DEBUG: TTL cleanup thread stopped" << std::endl;
+}
+
+void Server::cleanupExpiredKeys() {
+    std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+    
+    std::cerr << "DEBUG: Checking " << multi_storage_.size() << " keys for expiration" << std::endl;
+    
+    auto it = multi_storage_.begin();
+    while (it != multi_storage_.end()) {
+        if (it->second.isExpired()) {
+            std::cerr << "DEBUG: Cleaning up expired key: " << it->first << std::endl;
+            it = multi_storage_.erase(it);
+            expired_keys_cleaned_++;
+        } else {
+            ++it;
+        }
+    }
+}
+
 void Server::gracefulShutdown() {
     LOG_INFO("Starting graceful shutdown...");
     
@@ -1111,14 +1258,8 @@ void Server::gracefulShutdown() {
     
     // 关闭 WAL
     if (wal_manager_) {
-        wal_manager_.reset();
+        LOG_INFO("WAL manager exists (no explicit close needed)");
     }
-    
-    // 停止线程池
-    // TODO: 实现 EventLoopThreadPool::stop() 方法
-    // if (thread_pool_) {
-    //     thread_pool_->stop();
-    // }
     
     LOG_INFO("Graceful shutdown completed");
 }
