@@ -9,9 +9,7 @@
 #include <atomic>
 #include <map>
 #include <fstream>
-
-// 前向声明 DataValue
-struct DataValue;
+#include "../common/DataValue.h"  // 数据值定义
 
 // Snapshot 文件格式定义
 #define SNAPSHOT_MAGIC_NUMBER 0x544E5250  // "PRNT" (Print)

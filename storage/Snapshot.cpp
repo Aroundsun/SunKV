@@ -1,11 +1,14 @@
 #include "Snapshot.h"
-#include "../server/Server.h"  // 为了获取 DataValue 定义
+#include "../common/DataValue.h"  // 数据值定义
 #include <fstream>
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <cstring>
+#include <list>
+#include <set>
+#include <iostream>
 
 // CRC32 校验和计算
 static uint32_t calculate_crc32(const uint8_t* data, size_t length) {
