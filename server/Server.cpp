@@ -260,26 +260,51 @@ bool Server::initializePersistence() {
             config_->wal_max_file_size
         );
         
-        // 暂时跳过快照初始化，专注于 WAL 功能
-        std::cerr << "DEBUG: Skipping snapshot manager initialization for now" << std::endl;
-        // if (!snapshot_manager_->initialize()) {
-        //     std::cerr << "DEBUG: Snapshot manager initialization failed" << std::endl;
-        //     LOG_ERROR("Failed to initialize snapshot manager");
-        //     return false;
-        // }
-        std::cerr << "DEBUG: Snapshot manager skipped" << std::endl;
+        if (!snapshot_manager_->initialize()) {
+            std::cerr << "DEBUG: Snapshot manager initialization failed" << std::endl;
+            LOG_ERROR("Failed to initialize snapshot manager");
+            return false;
+        }
+        std::cerr << "DEBUG: Snapshot manager initialized successfully" << std::endl;
+        
+        // 启用快照恢复
+        std::cerr << "DEBUG: Starting snapshot recovery..." << std::endl;
+        std::map<std::string, DataValue> multi_data;
+        std::string latest_snapshot = snapshot_manager_->get_latest_snapshot();
+        bool snapshot_loaded = false;
+        
+        if (!latest_snapshot.empty() && std::filesystem::exists(latest_snapshot)) {
+            std::cerr << "DEBUG: Loading data from snapshot: " << latest_snapshot << std::endl;
+            if (load_multi_type_snapshot(multi_data)) {
+                std::cerr << "DEBUG: Multi-type snapshot loaded successfully" << std::endl;
+                snapshot_loaded = true;
+            } else {
+                std::cerr << "DEBUG: Failed to load multi-type snapshot" << std::endl;
+            }
+        } else {
+            std::cerr << "DEBUG: No snapshot found, starting with empty data" << std::endl;
+        }
         
         // 启用 WAL 恢复
         std::cerr << "DEBUG: Starting WAL recovery..." << std::endl;
-        std::map<std::string, DataValue> multi_data;
-        if (wal_manager_->replay_multi_type(multi_data)) {
-            std::cerr << "DEBUG: WAL replay completed successfully" << std::endl;
-            // 将恢复的数据加载到多类型存储
+        
+        if (snapshot_loaded) {
+            // 快照恢复成功，跳过 WAL 恢复避免重复操作
+            std::cerr << "DEBUG: Skipping WAL recovery after successful snapshot load" << std::endl;
+            // 直接使用快照数据
             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
             multi_storage_ = multi_data;
-            std::cerr << "DEBUG: Loaded " << multi_data.size() << " keys from WAL" << std::endl;
+            std::cerr << "DEBUG: Loaded " << multi_data.size() << " keys from snapshot" << std::endl;
         } else {
-            std::cerr << "DEBUG: WAL replay failed or no WAL data" << std::endl;
+            // 没有快照，进行 WAL 恢复
+            if (wal_manager_->replay_multi_type(multi_data)) {
+                std::cerr << "DEBUG: WAL replay completed successfully" << std::endl;
+                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                multi_storage_ = multi_data;
+                std::cerr << "DEBUG: Loaded " << multi_data.size() << " keys from WAL" << std::endl;
+            } else {
+                std::cerr << "DEBUG: WAL replay failed or no WAL data" << std::endl;
+            }
         }
         
         LOG_INFO("Persistence initialized successfully");
@@ -308,6 +333,26 @@ bool Server::load_multi_type_snapshot(std::map<std::string, DataValue>& data) {
         return false;
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to load multi-type snapshot: {}", e.what());
+        return false;
+    }
+}
+
+bool Server::create_multi_type_snapshot() {
+    try {
+        std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+        if (snapshot_manager_) {
+            std::cerr << "DEBUG: Creating multi-type snapshot with " << multi_storage_.size() << " keys" << std::endl;
+            bool success = snapshot_manager_->create_multi_type_snapshot(multi_storage_);
+            if (success) {
+                std::cerr << "DEBUG: Multi-type snapshot created successfully" << std::endl;
+            } else {
+                std::cerr << "DEBUG: Failed to create multi-type snapshot" << std::endl;
+            }
+            return success;
+        }
+        return false;
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to create multi-type snapshot: {}", e.what());
         return false;
     }
 }
@@ -457,6 +502,17 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "PING") {
                         auto pong = RESPSerializer::serializeSimpleString("PONG");
                         conn->send(pong.data(), pong.size());
+                        return;
+                    }
+                    
+                    if (cmd_name == "SNAPSHOT") {
+                        if (create_multi_type_snapshot()) {
+                            auto ok = RESPSerializer::serializeSimpleString("OK");
+                            conn->send(ok.data(), ok.size());
+                        } else {
+                            auto error = RESPSerializer::serializeError("Snapshot creation failed");
+                            conn->send(error.data(), error.size());
+                        }
                         return;
                     }
                     

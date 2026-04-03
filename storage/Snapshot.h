@@ -10,6 +10,9 @@
 #include <map>
 #include <fstream>
 
+// 前向声明 DataValue
+struct DataValue;
+
 // Snapshot 文件格式定义
 #define SNAPSHOT_MAGIC_NUMBER 0x544E5250  // "PRNT" (Print)
 #define SNAPSHOT_VERSION 1
@@ -206,6 +209,9 @@ public:
     
     // 创建快照
     bool create_snapshot(const std::map<std::string, std::string>& data);
+    
+    // 创建多数据类型快照
+    bool create_multi_type_snapshot(const std::map<std::string, DataValue>& data);
     
     // 加载快照
     bool load_snapshot(std::map<std::string, std::string>& data);

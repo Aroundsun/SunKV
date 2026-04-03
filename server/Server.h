@@ -171,6 +171,11 @@ private:
     bool load_multi_type_snapshot(std::map<std::string, DataValue>& data);
     
     /**
+     * @brief 创建多数据类型快照
+     */
+    bool create_multi_type_snapshot();
+    
+    /**
      * @brief 初始化命令系统
      */
     bool initializeCommands();
@@ -240,6 +245,9 @@ private:
     // 多类型内存存储
     std::map<std::string, DataValue> multi_storage_;
     std::mutex multi_storage_mutex_;
+    
+    // 快照时间戳（用于 WAL 过滤）
+    uint64_t snapshot_timestamp_{0};
     
     // 简单内存存储 (临时实现，向后兼容)
     std::map<std::string, std::string> simple_storage_;

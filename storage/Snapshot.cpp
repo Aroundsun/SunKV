@@ -1,4 +1,5 @@
 #include "Snapshot.h"
+#include "../server/Server.h"  // 为了获取 DataValue 定义
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -620,6 +621,55 @@ bool SnapshotManager::create_snapshot(const std::map<std::string, std::string>& 
     return true;
 }
 
+bool SnapshotManager::create_multi_type_snapshot(const std::map<std::string, DataValue>& data) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    std::string filename = generate_snapshot_filename();
+    SnapshotWriter writer(filename);
+    
+    if (!writer.open()) {
+        return false;
+    }
+    
+    for (const auto& pair : data) {
+        // 将 DataValue 转换为字符串存储
+        std::string value_str;
+        switch (pair.second.type) {
+            case DataType::STRING:
+                value_str = pair.second.string_value;
+                break;
+            case DataType::LIST:
+                // 简单地将列表元素用逗号连接
+                for (const auto& item : pair.second.list_value) {
+                    if (!value_str.empty()) value_str += ",";
+                    value_str += item;
+                }
+                break;
+            case DataType::SET:
+                // 简单地将集合元素用逗号连接
+                for (const auto& item : pair.second.set_value) {
+                    if (!value_str.empty()) value_str += ",";
+                    value_str += item;
+                }
+                break;
+            case DataType::HASH:
+                // 简单地将哈希键值对用逗号连接
+                for (const auto& [k, v] : pair.second.hash_value) {
+                    if (!value_str.empty()) value_str += ",";
+                    value_str += k + ":" + v;
+                }
+                break;
+        }
+        
+        if (!writer.write_data(pair.first, value_str)) {
+            return false;
+        }
+    }
+    
+    writer.close();
+    return true;
+}
+
 bool SnapshotManager::load_snapshot(std::map<std::string, std::string>& data) {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -635,27 +685,50 @@ bool SnapshotManager::load_snapshot(std::map<std::string, std::string>& data) {
     
     data.clear();
     
-    while (!reader.eof()) {
+    int max_entries = 1000;  // 防止无限循环
+    int entry_count = 0;
+    
+    while (entry_count < max_entries) {
+        // 检查文件位置是否在文件末尾
+        auto current_pos = reader.get_position();
+        std::ifstream file_stream(latest_snapshot, std::ios::binary | std::ios::ate);
+        auto file_size = file_stream.tellg();
+        file_stream.close();
+        
+        if (current_pos >= file_size) {
+            std::cerr << "DEBUG: Snapshot: Reached end of file at position " << current_pos << std::endl;
+            break;
+        }
+        
         auto entry = reader.read_next_entry();
         if (!entry) {
-            continue;
+            std::cerr << "DEBUG: Snapshot: Failed to read entry at position " << current_pos << std::endl;
+            break;
         }
+        
+        entry_count++;
+        std::cerr << "DEBUG: Snapshot: Read entry #" << entry_count << " type=" << (int)entry->type << " key=" << entry->key << std::endl;
         
         switch (entry->type) {
         case SnapshotEntryType::DATA:
             data[entry->key] = entry->value;
+            std::cerr << "DEBUG: Snapshot: DATA " << entry->key << "=" << entry->value << std::endl;
             break;
         case SnapshotEntryType::DELETED:
             data.erase(entry->key);
+            std::cerr << "DEBUG: Snapshot: DELETED " << entry->key << std::endl;
             break;
         case SnapshotEntryType::METADATA:
-            break;
-        case SnapshotEntryType::TTL:
+            std::cerr << "DEBUG: Snapshot: METADATA entry" << std::endl;
             break;
         }
     }
     
-    reader.close();
+    if (entry_count >= max_entries) {
+        std::cerr << "DEBUG: Snapshot: Reached maximum entry limit (" << max_entries << ")" << std::endl;
+    }
+    
+    std::cerr << "DEBUG: Snapshot: Read " << entry_count << " entries total" << std::endl;
     return true;
 }
 
@@ -708,7 +781,9 @@ SnapshotManager::SnapshotStats SnapshotManager::get_stats() const {
 }
 
 bool SnapshotManager::create_snapshot_directory() {
-    return std::filesystem::create_directories(snapshot_dir_);
+    std::error_code ec;
+    std::filesystem::create_directories(snapshot_dir_, ec);
+    return !ec;  // 如果没有错误则返回 true
 }
 
 std::vector<std::string> SnapshotManager::list_snapshot_files() const {
