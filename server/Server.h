@@ -25,10 +25,7 @@
 #include "../protocol/RESPParser.h"
 #include "../network/logger.h"
 #include "../common/DataValue.h"  // 数据值定义
-
-
-// 前向声明
-class Config;
+#include "../common/Config.h"    // 配置系统
 
 /**
  * @brief SunKV 服务器主类
@@ -42,7 +39,7 @@ public:
      * @brief 构造函数
      * @param config 配置对象
      */
-    explicit Server(std::unique_ptr<Config> config);
+    explicit Server(const Config& config);
     
     /**
      * @brief 析构函数
@@ -172,7 +169,7 @@ private:
     void cleanupExpiredKeys();
 
 private:
-    std::unique_ptr<Config> config_;                    // 配置对象
+    Config config_;                    // 配置对象
     std::unique_ptr<EventLoop> main_loop_;              // 主事件循环
     std::unique_ptr<TcpServer> tcp_server_;             // TCP 服务器
     std::unique_ptr<EventLoopThreadPool> thread_pool_;    // 线程池

@@ -1,5 +1,6 @@
 #include "logger.h"
 #include <filesystem>
+#include <iostream>
 #include <spdlog/sinks/stdout_sinks.h>
 
 Logger& Logger::instance() {
@@ -34,13 +35,13 @@ std::shared_ptr<spdlog::logger> Logger::getLogger() const {
 }
 
 void Logger::setLevelFromName(const std::string& level_name) {
-    if (level_name == "debug") {
+    if (level_name == "DEBUG") {
         logger_->set_level(spdlog::level::debug);
-    } else if (level_name == "info") {
+    } else if (level_name == "INFO") {
         logger_->set_level(spdlog::level::info);
-    } else if (level_name == "warn") {
+    } else if (level_name == "WARN") {
         logger_->set_level(spdlog::level::warn);
-    } else if (level_name == "error") {
+    } else if (level_name == "ERROR") {
         logger_->set_level(spdlog::level::err);
     } else {
         // 默认使用 info 级别
@@ -49,6 +50,12 @@ void Logger::setLevelFromName(const std::string& level_name) {
 }
 
 void Logger::setFile(const std::string& filename) {
+    // 先保存当前日志级别
+    auto current_level = logger_->level();
+    
+    // 先删除现有的 logger
+    spdlog::drop("sunkv");
+    
     if (filename.empty()) {
         // 如果文件名为空，使用控制台输出
         logger_ = spdlog::create<spdlog::sinks::stdout_sink_mt>("sunkv");
@@ -64,6 +71,7 @@ void Logger::setFile(const std::string& filename) {
         logger_ = spdlog::rotating_logger_mt("sunkv", filename, 1024 * 1024 * 100, 3);
     }
     
+    logger_->set_level(current_level);  // 恢复之前的日志级别
     logger_->set_pattern("[%H:%M:%S.%e] [%n] [%^%l%$] [%t] %v");
-    logger_->flush_on(spdlog::level::info);
+    logger_->flush_on(spdlog::level::debug);  // 在 DEBUG 级别也刷新
 }

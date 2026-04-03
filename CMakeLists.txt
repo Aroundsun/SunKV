@@ -92,7 +92,6 @@ set(PERSISTENCE_SOURCES
 # 服务器模块源文件
 set(SERVER_SOURCES
     server/Server.cpp                      # 服务器主类
-    server/Config.cpp                      # 配置管理
     server/main.cpp                         # 服务器主程序入口
 )
 
@@ -108,6 +107,7 @@ add_executable(sunkv
     ${COMMAND_SOURCES}                     # 命令模块
     ${STORAGE_SOURCES}                     # 存储模块
     ${PERSISTENCE_SOURCES}                 # 持久化模块
+    common/Config.cpp                      # 配置模块
 )
 
 # 链接库文件

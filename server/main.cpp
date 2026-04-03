@@ -4,7 +4,7 @@
 #include <filesystem>
 #include "network/logger.h"
 #include "Server.h"
-#include "Config.h"
+#include "../common/Config.h"
 
 /**
  * @brief 守护进程模式下的 PID 文件管理
@@ -63,28 +63,28 @@ int main(int argc, char* argv[]) {
     try {
         // 创建配置对象
         std::cerr << "DEBUG: Creating config..." << std::endl;
-        auto config = std::make_unique<Config>();
+        auto& config = Config::getInstance();
         
         // 加载默认配置
         std::cerr << "DEBUG: Loading config..." << std::endl;
         std::string default_config = "./sunkv.conf";
         if (std::filesystem::exists(default_config)) {
             std::cerr << "DEBUG: Loading config file: " << default_config << std::endl;
-            config->loadFromFile(default_config);
+            config.loadFromFile(default_config);
         }
         
         // 加载命令行参数（会覆盖配置文件中的设置）
         std::cerr << "DEBUG: Loading command line args..." << std::endl;
-        config->loadFromCommandLine(argc, argv);
+        config.loadFromArgs(argc, argv);
         
         // 设置日志级别
         std::cerr << "DEBUG: Setting log level..." << std::endl;
-        Logger::instance().setLevelFromName(config->log_level);
+        Logger::instance().setLevelFromName(config.log_level);
         
         // 如果指定了日志文件，设置日志输出
         std::cerr << "DEBUG: Setting log file..." << std::endl;
-        if (!config->log_file.empty()) {
-            Logger::instance().setFile(config->log_file);
+        if (!config.log_file.empty()) {
+            Logger::instance().setFile(config.log_file);
         }
         
         std::cerr << "DEBUG: Log setup complete..." << std::endl;
@@ -97,9 +97,9 @@ int main(int argc, char* argv[]) {
         // 守护进程模式处理
         std::cerr << "DEBUG: Checking daemon mode..." << std::endl;
         std::unique_ptr<PIDManager> pid_manager;
-        if (config->daemon_mode) {
+        if (false) {  // 暂时禁用守护进程模式
             std::cerr << "DEBUG: Daemon mode enabled..." << std::endl;
-            pid_manager = std::make_unique<PIDManager>(config->pid_file);
+            pid_manager = std::make_unique<PIDManager>("./sunkv.pid");
             
             std::cerr << "DEBUG: Creating PID manager..." << std::endl;
             if (!pid_manager->create()) {
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
         
         // 创建服务器实例
         std::cerr << "DEBUG: Creating server instance..." << std::endl;
-        auto server = std::make_unique<Server>(std::move(config));
+        auto server = std::make_unique<Server>(config);
         std::cerr << "DEBUG: Server instance created..." << std::endl;
         
         // 启动服务器
@@ -135,8 +135,8 @@ int main(int argc, char* argv[]) {
         
         LOG_INFO("SunKV Server started successfully");
         LOG_INFO("Listening on {}:{}", 
-                 config->bind_address, 
-                 config->bind_port);
+                 config.host, 
+                 config.port);
         
         // 等待服务器停止
         server->waitForStop();

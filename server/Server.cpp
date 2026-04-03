@@ -1,5 +1,5 @@
 #include "Server.h"
-#include "Config.h"
+#include "../common/Config.h"
 #include <csignal>
 #include <iostream>
 #include <fstream>
@@ -21,8 +21,8 @@ void signalHandler(int signal) {
     }
 }
 
-Server::Server(std::unique_ptr<Config> config)
-    : config_(std::move(config)),
+Server::Server(const Config& config)
+    : config_(config),
       start_time_(std::chrono::steady_clock::now()) {
     
     // 设置全局服务器实例
@@ -51,7 +51,7 @@ bool Server::start() {
     
     // 验证配置
     std::cerr << "DEBUG: Validating configuration..." << std::endl;
-    if (!config_->validate()) {
+    if (!config_.validate()) {
         std::cerr << "DEBUG: Configuration validation failed" << std::endl;
         LOG_ERROR("Invalid configuration");
         return false;
@@ -60,8 +60,8 @@ bool Server::start() {
     
     // 创建必要的目录
     std::cerr << "DEBUG: Creating data directories..." << std::endl;
-    if (!std::filesystem::exists(config_->data_dir)) {
-        std::filesystem::create_directories(config_->data_dir);
+    if (!std::filesystem::exists(config_.data_dir)) {
+        std::filesystem::create_directories(config_.data_dir);
     }
     
     // 初始化各个模块
@@ -112,15 +112,6 @@ bool Server::start() {
     // 启动服务器
     running_.store(true);
     stopping_.store(false);
-    
-    // 暂时禁用 TTL 清理线程，只使用被动清理
-    // ttl_cleanup_running_.store(true);
-    // ttl_cleanup_thread_ = std::thread(&Server::ttlCleanupThread, this);
-    
-    LOG_INFO("SunKV Server started successfully");
-    LOG_INFO("Listening on {}:{}", config_->bind_address, config_->bind_port);
-    LOG_INFO("Thread pool size: {}", config_->thread_pool_size);
-    LOG_INFO("Data directory: {}", config_->data_dir);
     
     // 启动主事件循环
     std::cerr << "DEBUG: Starting main event loop..." << std::endl;
@@ -187,8 +178,8 @@ bool Server::initializeNetwork() {
         tcp_server_ = std::make_unique<TcpServer>(
             main_loop_.get(),
             "SunKV",
-            config_->bind_address,
-            config_->bind_port
+            config_.host,
+            config_.port
         );
         std::cerr << "DEBUG: TCP server created" << std::endl;
         
@@ -198,7 +189,7 @@ bool Server::initializeNetwork() {
             main_loop_.get(),
             "SunKVThreadPool"
         );
-        thread_pool_->setThreadNum(config_->thread_pool_size);
+        thread_pool_->setThreadNum(config_.thread_pool_size);
         std::cerr << "DEBUG: Thread pool created" << std::endl;
         
         // 启动线程池
@@ -241,8 +232,8 @@ bool Server::initializePersistence() {
         // 初始化 WAL 管理器
         std::cerr << "DEBUG: Creating WAL manager..." << std::endl;
         wal_manager_ = std::make_unique<WALManager>(
-            config_->wal_dir,
-            config_->wal_max_file_size
+            config_.wal_dir,
+            config_.max_wal_file_size_mb * 1024 * 1024
         );
         std::cerr << "DEBUG: WAL manager created" << std::endl;
         
@@ -256,8 +247,7 @@ bool Server::initializePersistence() {
         
         // 初始化快照管理器
         snapshot_manager_ = std::make_unique<SnapshotManager>(
-            config_->snapshot_dir,
-            config_->wal_max_file_size
+            config_.snapshot_dir
         );
         
         if (!snapshot_manager_->initialize()) {
