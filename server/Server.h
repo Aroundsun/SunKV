@@ -166,6 +166,11 @@ private:
     bool initializePersistence();
     
     /**
+     * @brief 加载多数据类型快照
+     */
+    bool load_multi_type_snapshot(std::map<std::string, DataValue>& data);
+    
+    /**
      * @brief 初始化命令系统
      */
     bool initializeCommands();

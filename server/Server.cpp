@@ -74,14 +74,12 @@ bool Server::start() {
     std::cerr << "DEBUG: Storage initialized successfully" << std::endl;
     
     std::cerr << "DEBUG: Initializing persistence..." << std::endl;
-    // 暂时完全跳过持久化初始化
-    std::cerr << "DEBUG: Skipping persistence initialization for now" << std::endl;
-    // if (!initializePersistence()) {
-    //     std::cerr << "DEBUG: Persistence initialization failed" << std::endl;
-    //     LOG_ERROR("Failed to initialize persistence");
-    //     return false;
-    // }
-    std::cerr << "DEBUG: Persistence initialization skipped" << std::endl;
+    if (!initializePersistence()) {
+        std::cerr << "DEBUG: Persistence initialization failed" << std::endl;
+        LOG_ERROR("Failed to initialize persistence");
+        return false;
+    }
+    std::cerr << "DEBUG: Persistence initialized successfully" << std::endl;
     
     std::cerr << "DEBUG: Initializing commands..." << std::endl;
     if (!initializeCommands()) {
@@ -249,11 +247,10 @@ bool Server::initializePersistence() {
         std::cerr << "DEBUG: WAL manager created" << std::endl;
         
         std::cerr << "DEBUG: Initializing WAL manager..." << std::endl;
-        // 暂时跳过 WAL 初始化来测试
         if (!wal_manager_->initialize()) {
             std::cerr << "DEBUG: WAL manager initialization failed" << std::endl;
             LOG_ERROR("Failed to initialize WAL manager");
-            // return false; // 暂时跳过
+            return false;
         }
         std::cerr << "DEBUG: WAL manager initialized successfully" << std::endl;
         
@@ -263,40 +260,54 @@ bool Server::initializePersistence() {
             config_->wal_max_file_size
         );
         
-        if (!snapshot_manager_->initialize()) {
-            std::cerr << "DEBUG: Snapshot manager initialization failed" << std::endl;
-            LOG_ERROR("Failed to initialize snapshot manager");
-            // return false; // 暂时跳过
-        }
-        std::cerr << "DEBUG: Snapshot manager initialized successfully" << std::endl;
+        // 暂时跳过快照初始化，专注于 WAL 功能
+        std::cerr << "DEBUG: Skipping snapshot manager initialization for now" << std::endl;
+        // if (!snapshot_manager_->initialize()) {
+        //     std::cerr << "DEBUG: Snapshot manager initialization failed" << std::endl;
+        //     LOG_ERROR("Failed to initialize snapshot manager");
+        //     return false;
+        // }
+        std::cerr << "DEBUG: Snapshot manager skipped" << std::endl;
         
-        // 获取数据并尝试从快照恢复
-        std::map<std::string, std::string> data;
-        std::string latest_snapshot = snapshot_manager_->get_latest_snapshot();
-        if (!latest_snapshot.empty() && std::filesystem::exists(latest_snapshot)) {
-            LOG_INFO("Loading data from snapshot: {}", latest_snapshot);
-            if (snapshot_manager_->load_snapshot(data)) {
-                // 将数据加载到存储引擎
-                for (const auto& [key, value] : data) {
-                    storage_engine_->set(key, value);
-                }
-                LOG_INFO("Snapshot loaded successfully");
-            } else {
-                LOG_ERROR("Failed to load snapshot");
-            }
-        }
-        
-        // 重放 WAL 日志
-        if (wal_manager_->replay(*storage_engine_)) {
-            LOG_INFO("WAL replay completed successfully");
+        // 启用 WAL 恢复
+        std::cerr << "DEBUG: Starting WAL recovery..." << std::endl;
+        std::map<std::string, DataValue> multi_data;
+        if (wal_manager_->replay_multi_type(multi_data)) {
+            std::cerr << "DEBUG: WAL replay completed successfully" << std::endl;
+            // 将恢复的数据加载到多类型存储
+            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+            multi_storage_ = multi_data;
+            std::cerr << "DEBUG: Loaded " << multi_data.size() << " keys from WAL" << std::endl;
         } else {
-            LOG_ERROR("WAL replay failed");
+            std::cerr << "DEBUG: WAL replay failed or no WAL data" << std::endl;
         }
         
         LOG_INFO("Persistence initialized successfully");
         return true;
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to initialize persistence: {}", e.what());
+        return false;
+    }
+}
+
+bool Server::load_multi_type_snapshot(std::map<std::string, DataValue>& data) {
+    try {
+        // 首先尝试加载现有的字符串快照
+        std::map<std::string, std::string> string_data;
+        if (snapshot_manager_->load_snapshot(string_data)) {
+            // 将字符串数据转换为多数据类型格式
+            for (const auto& [key, value] : string_data) {
+                DataValue data_value(value);  // 创建字符串类型的 DataValue
+                data[key] = data_value;
+            }
+            LOG_INFO("Converted {} string entries to multi-type format", string_data.size());
+            return true;
+        }
+        
+        LOG_WARN("No snapshot data found");
+        return false;
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to load multi-type snapshot: {}", e.what());
         return false;
     }
 }
@@ -462,6 +473,11 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                                 multi_storage_[key] = DataValue(value);  // 创建新的字符串值，默认无 TTL
                             }
                             
+                            // 记录到 WAL
+                            if (wal_manager_) {
+                                wal_manager_->write_set(key, value);
+                            }
+                            
                             auto ok = RESPSerializer::serializeSimpleString("OK");
                             conn->send(ok.data(), ok.size());
                             std::cerr << "DEBUG: SET " << key << "=" << value << std::endl;
@@ -497,14 +513,21 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "DEL" && cmd_array.size() >= 2) {
                         int deleted_count = 0;
                         {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             for (size_t i = 1; i < cmd_array.size(); ++i) {
                                 if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
                                     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
                                     std::string key = key_bulk->getValue();
-                                    if (simple_storage_.erase(key) > 0) {
+                                    auto it = multi_storage_.find(key);
+                                    if (it != multi_storage_.end()) {
+                                        multi_storage_.erase(it);
                                         deleted_count++;
                                         std::cerr << "DEBUG: DEL " << key << " (deleted)" << std::endl;
+                                        
+                                        // 记录到 WAL
+                                        if (wal_manager_) {
+                                            wal_manager_->write_del(key);
+                                        }
                                     } else {
                                         std::cerr << "DEBUG: DEL " << key << " (not found)" << std::endl;
                                     }

@@ -8,8 +8,12 @@
 #include <fstream>
 #include <atomic>
 #include <functional>
+#include <map>
 
 class StorageEngine;  // 前向声明
+
+// 前向声明 DataValue
+struct DataValue;
 
 // WAL 操作类型
 enum class WALOperationType : uint8_t {
@@ -221,6 +225,9 @@ public:
     
     // 重放 WAL（用于恢复）
     bool replay(StorageEngine& storage);
+    
+    // 重放 WAL（用于多数据类型恢复）
+    bool replay_multi_type(std::map<std::string, DataValue>& storage);
     
     // 清理旧的 WAL 文件
     bool cleanup_old_files();

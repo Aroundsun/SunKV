@@ -1,5 +1,6 @@
 #include "WAL.h"
 #include "StorageEngine.h"
+#include "../server/Server.h"  // 为了获取 DataValue 定义
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -557,17 +558,47 @@ size_t WALReader::get_position() const {
 bool WALReader::read_all_entries(EntryCallback callback) {
     reset();
     
-    while (!eof()) {
-        auto entry = read_next_entry();
-        if (!entry) {
-            continue;
+    int max_entries = 1000;  // 防止无限循环
+    int entry_count = 0;
+    
+    while (entry_count < max_entries) {
+        // 检查文件位置是否在文件末尾
+        auto current_pos = file_stream_.tellg();
+        file_stream_.seekg(0, std::ios::end);
+        auto file_size = file_stream_.tellg();
+        file_stream_.seekg(current_pos);
+        
+        if (current_pos >= file_size) {
+            std::cerr << "DEBUG: Reached end of file at position " << current_pos << std::endl;
+            break;
         }
         
+        // 检查是否还有足够的数据读取头部
+        if (file_size - current_pos < sizeof(WALHeader)) {
+            std::cerr << "DEBUG: Not enough data for header at position " << current_pos << std::endl;
+            break;
+        }
+        
+        auto entry = read_next_entry();
+        if (!entry) {
+            std::cerr << "DEBUG: Failed to read entry at position " << current_pos << std::endl;
+            break;
+        }
+        
+        entry_count++;
+        std::cerr << "DEBUG: Read entry #" << entry_count << std::endl;
+        
         if (!callback(*entry)) {
+            std::cerr << "DEBUG: Callback returned false, stopping" << std::endl;
             return false;  // 回调返回 false，停止读取
         }
     }
     
+    if (entry_count >= max_entries) {
+        std::cerr << "DEBUG: Reached maximum entry limit (" << max_entries << ")" << std::endl;
+    }
+    
+    std::cerr << "DEBUG: Read " << entry_count << " entries total" << std::endl;
     return true;
 }
 
@@ -608,13 +639,20 @@ WALManager::~WALManager() {
 bool WALManager::initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    std::cerr << "DEBUG: WALManager::initialize() called, wal_dir=" << wal_dir_ << std::endl;
+    
     // 创建 WAL 目录
     if (!create_wal_directory()) {
+        std::cerr << "DEBUG: Failed to create WAL directory" << std::endl;
         return false;
     }
     
+    std::cerr << "DEBUG: WAL directory created/exists" << std::endl;
+    
     // 获取当前序列号
     auto wal_files = list_wal_files();
+    std::cerr << "DEBUG: Found " << wal_files.size() << " WAL files" << std::endl;
+    
     if (!wal_files.empty()) {
         // 从文件名解析最大的序列号
         uint64_t max_seq = 0;
@@ -631,16 +669,20 @@ bool WALManager::initialize() {
             }
         }
         current_sequence_ = max_seq;
+        std::cerr << "DEBUG: Current sequence number: " << current_sequence_ << std::endl;
     }
     
     // 创建当前写入器
     std::string current_file = get_current_wal_file();
+    std::cerr << "DEBUG: Current WAL file: " << current_file << std::endl;
     current_writer_ = std::make_unique<WALWriter>(current_file);
     
     if (!current_writer_->open()) {
+        std::cerr << "DEBUG: Failed to open WAL writer" << std::endl;
         return false;
     }
     
+    std::cerr << "DEBUG: WAL writer opened successfully" << std::endl;
     return true;
 }
 
@@ -828,6 +870,76 @@ bool WALManager::replay(StorageEngine& storage) {
     return true;
 }
 
+bool WALManager::replay_multi_type(std::map<std::string, DataValue>& storage) {
+    std::cerr << "DEBUG: WALManager::replay_multi_type called" << std::endl;
+    
+    auto wal_files = list_wal_files();
+    std::cerr << "DEBUG: Found " << wal_files.size() << " WAL files for replay" << std::endl;
+    
+    for (const auto& file : wal_files) {
+        std::string file_path = wal_dir_ + "/" + file;
+        std::cerr << "DEBUG: Replaying WAL file: " << file_path << std::endl;
+        
+        WALReader reader(file_path);
+        
+        if (!reader.open()) {
+            std::cerr << "DEBUG: Failed to open WAL file: " << file_path << std::endl;
+            continue;
+        }
+        
+        int entry_count = 0;
+        bool success = reader.read_all_entries([&storage, &entry_count](const WALLogEntry& entry) {
+            std::cerr << "DEBUG: Processing WAL entry #" << (++entry_count) 
+                     << " type=" << (int)entry.operation 
+                     << " key=" << entry.key << std::endl;
+            
+            switch (entry.operation) {
+                case WALOperationType::SET:
+                    {
+                        DataValue data_value(entry.value);  // 创建字符串类型的 DataValue
+                        storage[entry.key] = data_value;
+                        std::cerr << "DEBUG: SET " << entry.key << "=" << entry.value << std::endl;
+                    }
+                    break;
+                case WALOperationType::DEL:
+                    storage.erase(entry.key);
+                    std::cerr << "DEBUG: DEL " << entry.key << std::endl;
+                    break;
+                case WALOperationType::CLEAR:
+                    storage.clear();
+                    std::cerr << "DEBUG: CLEAR all data" << std::endl;
+                    break;
+                case WALOperationType::BEGIN:
+                case WALOperationType::COMMIT:
+                case WALOperationType::ROLLBACK:
+                    // 事务操作暂时忽略
+                    std::cerr << "DEBUG: Ignoring transaction operation" << std::endl;
+                    break;
+            }
+            
+            // 防止无限循环，限制处理条目数
+            if (entry_count > 1000) {
+                std::cerr << "DEBUG: Too many entries, stopping to prevent infinite loop" << std::endl;
+                return false;
+            }
+            
+            return true;
+        });
+        
+        reader.close();
+        
+        if (!success) {
+            std::cerr << "DEBUG: Failed to replay WAL file: " << file_path << std::endl;
+            return false;
+        }
+        
+        std::cerr << "DEBUG: Processed " << entry_count << " entries from " << file_path << std::endl;
+    }
+    
+    std::cerr << "DEBUG: WAL replay completed successfully" << std::endl;
+    return true;
+}
+
 bool WALManager::cleanup_old_files() {
     auto wal_files = list_wal_files();
     
@@ -919,5 +1031,7 @@ std::vector<std::string> WALManager::list_wal_files() const {
 }
 
 bool WALManager::create_wal_directory() {
-    return std::filesystem::create_directories(wal_dir_);
+    std::error_code ec;
+    std::filesystem::create_directories(wal_dir_, ec);
+    return !ec;  // 如果没有错误则返回 true
 }
