@@ -138,8 +138,29 @@ int main(int argc, char* argv[]) {
                  config.host, 
                  config.port);
         
-        // 等待服务器停止
-        server->waitForStop();
+        // 等待服务器停止 - 使用新的主循环逻辑
+        while (server->isRunning() && !server->isStopping()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        
+        // 主循环退出后执行优雅关闭
+        std::cerr << "DEBUG: Main loop exited, running=" << server->isRunning() 
+                  << ", stopping=" << server->isStopping() << std::endl;
+        
+        try {
+            if (server->isStopping()) {
+                std::cerr << "DEBUG: About to execute graceful shutdown..." << std::endl;
+                LOG_INFO("Executing graceful shutdown...");
+                server->stop();
+                std::cerr << "DEBUG: Graceful shutdown completed" << std::endl;
+            } else {
+                LOG_INFO("Server stopped without graceful shutdown");
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "ERROR: Exception during graceful shutdown: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR: Unknown exception during graceful shutdown" << std::endl;
+        }
         
         LOG_INFO("SunKV Server stopped gracefully");
         return 0;

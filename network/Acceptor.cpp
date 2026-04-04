@@ -85,3 +85,24 @@ void Acceptor::handleRead() {
         }
     }
 }
+
+void Acceptor::stop() {
+    if (listening_) {
+        LOG_INFO("Acceptor::stop [{}:{}] - stopping acceptor", listenAddr_, listenPort_);
+        
+        listening_ = false;
+        
+        // 禁用 Channel
+        if (acceptChannel_) {
+            acceptChannel_->disableAll();
+            acceptChannel_->remove();
+        }
+        
+        // 关闭监听 socket
+        if (acceptSocket_) {
+            acceptSocket_->shutdown();
+        }
+        
+        LOG_INFO("Acceptor::stop [{}:{}] - acceptor stopped", listenAddr_, listenPort_);
+    }
+}

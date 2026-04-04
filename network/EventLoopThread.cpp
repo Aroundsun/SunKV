@@ -62,3 +62,16 @@ void EventLoopThread::threadFunc() {
     
     LOG_INFO("EventLoop thread {} stopped", name_);
 }
+
+void EventLoopThread::stop() {
+    if (loop_) {
+        LOG_INFO("EventLoopThread::stop [{}] - stopping event loop", name_);
+        loop_->quit();
+    }
+    
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    
+    exiting_ = true;
+}

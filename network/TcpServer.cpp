@@ -118,3 +118,27 @@ void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& con
     ioLoop->queueInLoop(
         std::bind(&TcpConnection::connectDestroyed, conn));
 }
+
+void TcpServer::stop() {
+    if (started_.exchange(false)) {
+        LOG_INFO("TcpServer::stop [{}] - stopping server", name_);
+        
+        // 停止接受新连接
+        if (acceptor_) {
+            acceptor_->stop();
+        }
+        
+        // 关闭所有现有连接
+        for (auto& conn : connections_) {
+            conn.second->forceClose();
+        }
+        connections_.clear();
+        
+        // 停止线程池
+        if (threadPool_) {
+            threadPool_->stop();
+        }
+        
+        LOG_INFO("TcpServer::stop [{}] - server stopped", name_);
+    }
+}

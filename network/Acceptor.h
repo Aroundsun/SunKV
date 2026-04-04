@@ -23,6 +23,9 @@ public:
     // 开始监听
     void listen();
     
+    // 停止监听
+    void stop();
+    
     // 是否正在监听
     bool listening() const { return listening_; }
     

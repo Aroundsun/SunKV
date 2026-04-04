@@ -84,6 +84,21 @@ public:
     };
     
     ServerStats getStats() const;
+    
+    /**
+     * @brief 设置停止标志（用于信号处理）
+     */
+    void setStopping() { stopping_.store(true); }
+    
+    /**
+     * @brief 检查服务器是否停止
+     */
+    bool isStopping() const { return stopping_.load(); }
+    
+    /**
+     * @brief 停止主事件循环（用于信号处理）
+     */
+    void stopMainLoop() { if (main_loop_) main_loop_->quit(); }
 
 private:
     /**

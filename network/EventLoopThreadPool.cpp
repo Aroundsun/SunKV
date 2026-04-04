@@ -79,3 +79,25 @@ std::vector<EventLoop*> EventLoopThreadPool::getAllLoops() {
         return loops_;
     }
 }
+
+void EventLoopThreadPool::stop() {
+    if (started_) {
+        LOG_INFO("EventLoopThreadPool::stop [{}] - stopping thread pool", name_);
+        
+        // 通知所有 EventLoop 退出
+        for (auto& loop : loops_) {
+            loop->quit();
+        }
+        
+        // 停止所有线程
+        for (auto& thread : threads_) {
+            thread->stop();
+        }
+        
+        loops_.clear();
+        threads_.clear();
+        started_ = false;
+        
+        LOG_INFO("EventLoopThreadPool::stop [{}] - thread pool stopped", name_);
+    }
+}

@@ -31,6 +31,9 @@ public:
     // 启动线程池
     void start();
     
+    // 停止线程池
+    void stop();
+    
     // 是否已启动
     bool started() const { return started_; }
     

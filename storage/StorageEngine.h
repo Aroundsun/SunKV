@@ -57,6 +57,9 @@ public:
     
     // 清理过期键
     void cleanupExpired();
+    
+    // 清理存储引擎（用于优雅关闭）
+    void cleanup();
 
 private:
     StorageEngine() = default;

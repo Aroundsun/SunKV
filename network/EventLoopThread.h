@@ -22,6 +22,9 @@ public:
     // 启动线程并返回 EventLoop
     EventLoop* startLoop();
     
+    // 停止线程
+    void stop();
+    
     // 获取线程名称
     const std::string& name() const { return name_; }
 

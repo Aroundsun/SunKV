@@ -4,26 +4,38 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
 #include <filesystem>
 #include "../command/SimplePingCommand.h"
 #include "../network/Buffer.h"
 
 // 全局服务器实例，用于信号处理
 static Server* g_server = nullptr;
+static int pipe_fds[2];
 
 /**
  * @brief 信号处理函数
  */
 void signalHandler(int signal) {
     if (g_server) {
-        LOG_INFO("Received signal {}, shutting down gracefully...", signal);
-        g_server->stop();
+        write(STDOUT_FILENO, "Received shutdown signal\n", 24);
+        write(STDOUT_FILENO, "Calling stop() method\n", 22);
+        // 直接在信号处理中设置停止标志
+        g_server->setStopping();
+        g_server->stopMainLoop();
+        write(STDOUT_FILENO, "Signal handler completed\n", 26);
     }
 }
 
 Server::Server(const Config& config)
     : config_(config),
       start_time_(std::chrono::steady_clock::now()) {
+    
+    // 创建管道用于信号处理
+    if (pipe(pipe_fds) == -1) {
+        perror("pipe");
+        return;
+    }
     
     // 设置全局服务器实例
     g_server = this;
@@ -37,6 +49,10 @@ Server::Server(const Config& config)
 Server::~Server() {
     stop();
     g_server = nullptr;
+    
+    // 关闭管道
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
 }
 
 bool Server::start() {
@@ -115,17 +131,34 @@ bool Server::start() {
     
     // 启动主事件循环
     std::cerr << "DEBUG: Starting main event loop..." << std::endl;
-    main_loop_->loop();
+    
+    while (running_.load() && !stopping_.load()) {
+        main_loop_->loop();
+        // 检查是否收到停止信号
+        if (stopping_.load()) {
+            break;
+        }
+    }
+    
     std::cerr << "DEBUG: Main event loop exited" << std::endl;
     
     return true;
 }
 
 void Server::stop() {
-    if (!running_.load() || stopping_.load()) {
+    std::cerr << "DEBUG: Server::stop() entry point" << std::endl;
+    LOG_INFO("Server::stop() called, running={}, stopping={}", 
+             running_.load(), stopping_.load());
+    
+    // 检查是否已经执行过优雅关闭
+    static std::atomic<bool> shutdown_executed{false};
+    if (shutdown_executed.exchange(true)) {
+        LOG_INFO("Server::stop() graceful shutdown already executed");
+        std::cerr << "DEBUG: Server::stop() graceful shutdown already executed" << std::endl;
         return;
     }
     
+    std::cerr << "DEBUG: Server::stop() proceeding with shutdown" << std::endl;
     LOG_INFO("Stopping SunKV Server...");
     stopping_.store(true);
     
@@ -1293,41 +1326,69 @@ void Server::cleanupExpiredKeys() {
 void Server::gracefulShutdown() {
     LOG_INFO("Starting graceful shutdown...");
     
-    // 停止接受新连接
-    // TODO: 实现 TcpServer::stop() 方法
-    // if (tcp_server_) {
-    //     tcp_server_->stop();
-    // }
-    
-    // 等待所有连接关闭
-    while (current_connections_.load() > 0) {
-        LOG_INFO("Waiting for {} connections to close...", current_connections_.load());
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 1. 停止接受新连接
+    if (tcp_server_) {
+        LOG_INFO("Stopping TCP server...");
+        tcp_server_->stop();
     }
     
-    // 创建最终快照
+    // 2. 停止主事件循环
+    if (main_loop_) {
+        LOG_INFO("Stopping main event loop...");
+        main_loop_->quit();
+    }
+    
+    // 3. 等待所有连接关闭（最多等待30秒）
+    int wait_count = 0;
+    const int max_wait_count = 300; // 30秒，每次100ms
+    while (current_connections_.load() > 0 && wait_count < max_wait_count) {
+        LOG_INFO("Waiting for {} connections to close... ({}/30s)", 
+                 current_connections_.load(), wait_count / 10);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        wait_count++;
+    }
+    
+    if (current_connections_.load() > 0) {
+        LOG_WARN("Force closing remaining {} connections", current_connections_.load());
+    }
+    
+    // 4. 停止线程池
+    if (thread_pool_) {
+        LOG_INFO("Stopping thread pool...");
+        thread_pool_->stop();
+    }
+    
+    // 5. 停止 TTL 清理线程
+    if (ttl_cleanup_thread_.joinable()) {
+        LOG_INFO("Stopping TTL cleanup thread...");
+        ttl_cleanup_running_.store(false);
+        ttl_cleanup_thread_.join();
+    }
+    
+    // 6. 创建最终快照（使用多类型数据）
     if (snapshot_manager_ && storage_engine_) {
-        // 获取所有数据
-        std::map<std::string, std::string> data;
-        auto all_keys = storage_engine_->keys();
-        for (const auto& key : all_keys) {
-            auto value = storage_engine_->get(key);
-            if (!value.empty()) {
-                data[key] = value;
-            }
-        }
-        
         LOG_INFO("Creating final snapshot...");
-        if (snapshot_manager_->create_snapshot(data)) {
+        if (create_multi_type_snapshot()) {
             LOG_INFO("Final snapshot created successfully");
         } else {
             LOG_ERROR("Failed to create final snapshot");
         }
     }
     
-    // 关闭 WAL
+    // 7. 同步并关闭 WAL
     if (wal_manager_) {
-        LOG_INFO("WAL manager exists (no explicit close needed)");
+        LOG_INFO("Syncing WAL...");
+        if (wal_manager_->flush()) {
+            LOG_INFO("WAL synced successfully");
+        } else {
+            LOG_ERROR("Failed to sync WAL");
+        }
+    }
+    
+    // 8. 清理存储引擎
+    if (storage_engine_) {
+        LOG_INFO("Cleaning up storage engine...");
+        storage_engine_->cleanup();
     }
     
     LOG_INFO("Graceful shutdown completed");

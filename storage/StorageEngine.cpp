@@ -1,4 +1,5 @@
 #include "StorageEngine.h"
+#include "network/logger.h"
 #include <vector>
 #include <algorithm>
 #include <glob.h>
@@ -115,4 +116,16 @@ void StorageEngine::cleanupExpired() {
             ++it;
         }
     }
+}
+
+void StorageEngine::cleanup() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 清理过期键
+    cleanupExpired();
+    
+    // 清空所有数据
+    data_.clear();
+    
+    LOG_INFO("Storage engine cleanup completed");
 }

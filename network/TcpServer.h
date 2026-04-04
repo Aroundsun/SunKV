@@ -36,6 +36,9 @@ public:
     // 开始监听
     void start();
     
+    // 停止服务器
+    void stop();
+    
     // 设置线程数量
     void setThreadNum(int numThreads);
     
