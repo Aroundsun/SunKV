@@ -1219,73 +1219,98 @@ void Server::cleanupExpiredKeys() {
 
 void Server::gracefulShutdown() {
     LOG_INFO("Starting graceful shutdown...");
+    std::cerr << "DEBUG: gracefulShutdown() started" << std::endl;
     
     // 1. 停止接受新连接
     if (tcp_server_) {
         LOG_INFO("Stopping TCP server...");
+        std::cerr << "DEBUG: Stopping TCP server..." << std::endl;
         tcp_server_->stop();
+        std::cerr << "DEBUG: TCP server stopped" << std::endl;
     }
     
     // 2. 停止主事件循环
     if (main_loop_) {
         LOG_INFO("Stopping main event loop...");
+        std::cerr << "DEBUG: Stopping main event loop..." << std::endl;
         main_loop_->quit();
+        std::cerr << "DEBUG: Main event loop stopped" << std::endl;
     }
     
     // 3. 等待所有连接关闭（最多等待30秒）
     int wait_count = 0;
     const int max_wait_count = 300; // 30秒，每次100ms
+    std::cerr << "DEBUG: Waiting for connections to close, current=" 
+              << current_connections_.load() << std::endl;
     while (current_connections_.load() > 0 && wait_count < max_wait_count) {
         LOG_INFO("Waiting for {} connections to close... ({}/30s)", 
                  current_connections_.load(), wait_count / 10);
+        std::cerr << "DEBUG: Still waiting, connections=" << current_connections_.load() 
+                  << ", count=" << wait_count << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         wait_count++;
     }
     
+    std::cerr << "DEBUG: Finished waiting for connections" << std::endl;
+    
     if (current_connections_.load() > 0) {
         LOG_WARN("Force closing remaining {} connections", current_connections_.load());
+        std::cerr << "DEBUG: Force closing remaining connections" << std::endl;
     }
     
     // 4. 停止线程池
     if (thread_pool_) {
         LOG_INFO("Stopping thread pool...");
+        std::cerr << "DEBUG: Stopping thread pool..." << std::endl;
         thread_pool_->stop();
+        std::cerr << "DEBUG: Thread pool stopped" << std::endl;
     }
     
     // 5. 停止 TTL 清理线程
     if (ttl_cleanup_thread_.joinable()) {
         LOG_INFO("Stopping TTL cleanup thread...");
+        std::cerr << "DEBUG: Stopping TTL cleanup thread..." << std::endl;
         ttl_cleanup_running_.store(false);
         ttl_cleanup_thread_.join();
+        std::cerr << "DEBUG: TTL cleanup thread stopped" << std::endl;
     }
     
     // 6. 创建最终快照（使用多类型数据）
     if (snapshot_manager_ && storage_engine_) {
         LOG_INFO("Creating final snapshot...");
+        std::cerr << "DEBUG: Creating final snapshot..." << std::endl;
         if (create_multi_type_snapshot()) {
             LOG_INFO("Final snapshot created successfully");
+            std::cerr << "DEBUG: Final snapshot created successfully" << std::endl;
         } else {
-            LOG_ERROR("Failed to create final snapshot");
+            LOG_WARN("Failed to create final snapshot");
+            std::cerr << "DEBUG: Failed to create final snapshot" << std::endl;
         }
     }
     
     // 7. 同步并关闭 WAL
     if (wal_manager_) {
         LOG_INFO("Syncing WAL...");
+        std::cerr << "DEBUG: Syncing WAL..." << std::endl;
         if (wal_manager_->flush()) {
             LOG_INFO("WAL synced successfully");
+            std::cerr << "DEBUG: WAL synced successfully" << std::endl;
         } else {
             LOG_ERROR("Failed to sync WAL");
+            std::cerr << "DEBUG: Failed to sync WAL" << std::endl;
         }
     }
     
     // 8. 清理存储引擎
     if (storage_engine_) {
         LOG_INFO("Cleaning up storage engine...");
+        std::cerr << "DEBUG: Cleaning up storage engine..." << std::endl;
         storage_engine_->cleanup();
+        std::cerr << "DEBUG: Storage engine cleanup completed" << std::endl;
     }
     
     LOG_INFO("Graceful shutdown completed");
+    std::cerr << "DEBUG: gracefulShutdown() completed" << std::endl;
 }
 
 void Server::updateStats() {
