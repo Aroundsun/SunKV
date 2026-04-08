@@ -16,11 +16,7 @@ EventLoopThread::EventLoopThread(const ThreadInitCallback& cb, const std::string
 }
 
 EventLoopThread::~EventLoopThread() {
-    exiting_ = true;
-    if (loop_ != nullptr) {
-        loop_->quit();
-        thread_.join();
-    }
+    stop();
 }
 
 EventLoop* EventLoopThread::startLoop() {
@@ -64,14 +60,20 @@ void EventLoopThread::threadFunc() {
 }
 
 void EventLoopThread::stop() {
-    if (loop_) {
-        LOG_INFO("EventLoopThread::stop [{}] - 正在停止事件循环", name_);
-        loop_->quit();
+    EventLoop* loop = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        loop = loop_;
     }
-    
+
+    if (loop) {
+        LOG_INFO("EventLoopThread::stop [{}] - 正在停止事件循环", name_);
+        loop->quit();
+    }
+
     if (thread_.joinable()) {
         thread_.join();
     }
-    
+
     exiting_ = true;
 }
