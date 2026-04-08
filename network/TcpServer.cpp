@@ -82,8 +82,8 @@ void TcpServer::newConnection(int sockfd, const std::string& localAddr, const st
     ++nextConnId_;
     std::string connName = name_ + buf;
     
-    LOG_INFO("TcpServer::newConnection [{}] - 新连接 [{}]，来自 {} -> {}", 
-             name_, connName, peerAddr, localAddr);
+    LOG_DEBUG("TcpServer::newConnection [{}] - 新连接 [{}]，来自 {} -> {}", 
+              name_, connName, peerAddr, localAddr);
     
     // 从线程池中选择一个 EventLoop
     EventLoop* ioLoop = threadPool_->getNextLoop();
@@ -109,7 +109,7 @@ void TcpServer::removeConnection(const std::shared_ptr<TcpConnection>& conn) {
 void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& conn) {
     loop_->assertInLoopThread();
     
-    LOG_INFO("TcpServer::removeConnectionInLoop [{}] - 连接 [{}]", name_, conn->name());
+    LOG_DEBUG("TcpServer::removeConnectionInLoop [{}] - 连接 [{}]", name_, conn->name());
     
     size_t n = connections_.erase(conn->name());
     assert(n == 1);

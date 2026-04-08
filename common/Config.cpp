@@ -100,6 +100,10 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             port = std::stoi(argv[++i]);
         } else if (arg == "--host" && i + 1 < argc) {
             host = argv[++i];
+        } else if (arg == "--thread-pool-size" && i + 1 < argc) {
+            thread_pool_size = std::stoi(argv[++i]);
+        } else if (arg == "--max-connections" && i + 1 < argc) {
+            max_connections = std::stoi(argv[++i]);
         } else if (arg == "--data-dir" && i + 1 < argc) {
             data_dir = argv[++i];
         } else if (arg == "--config" && i + 1 < argc) {
@@ -285,6 +289,8 @@ void Config::printUsage() const {
     std::cout << "Options:" << std::endl;
     std::cout << "  --port <port>           Server port (default: 6379)" << std::endl;
     std::cout << "  --host <host>           Server host (default: 0.0.0.0)" << std::endl;
+    std::cout << "  --thread-pool-size <n>  Worker thread count (default: 4)" << std::endl;
+    std::cout << "  --max-connections <n>   Max client connections (default: 1000)" << std::endl;
     std::cout << "  --data-dir <dir>        Data directory (default: ./data)" << std::endl;
     std::cout << "  --config <file>         Configuration file" << std::endl;
     std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;

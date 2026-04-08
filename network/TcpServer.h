@@ -2,7 +2,7 @@
 
 #include <string>
 #include <memory>
-#include <map>
+#include <unordered_map>
 #include <atomic>
 #include "logger.h"
 
@@ -68,7 +68,7 @@ private:
     
     std::atomic<bool> started_;
     int nextConnId_;
-    std::map<std::string, std::shared_ptr<TcpConnection>> connections_;
+    std::unordered_map<std::string, std::shared_ptr<TcpConnection>> connections_;
     
     std::function<void(const std::shared_ptr<TcpConnection>&)> connectionCallback_;
     std::function<void(const std::shared_ptr<TcpConnection>&, void*, size_t)> messageCallback_;

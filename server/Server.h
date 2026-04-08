@@ -237,6 +237,10 @@ private:
     std::atomic<uint64_t> total_commands_{0};
     std::atomic<uint64_t> expired_keys_cleaned_{0};   // 清理的过期键计数
     std::atomic<uint64_t> total_operations_{0};
+    // 轻量性能埋点统计（纳秒）
+    std::atomic<uint64_t> profile_parse_ns_{0};
+    std::atomic<uint64_t> profile_process_ns_{0};
+    std::atomic<uint64_t> profile_message_count_{0};
     std::chrono::steady_clock::time_point start_time_;
     
     // 线程相关

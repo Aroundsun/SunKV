@@ -400,10 +400,18 @@ void Server::setupConnectionCallbacks() {
 }
 
 void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
-    total_connections_.fetch_add(1);
-    current_connections_.fetch_add(1);
-    
-    LOG_INFO("收到新连接: {}", conn->peerAddress());
+    if (conn->connected()) {
+        total_connections_.fetch_add(1);
+        current_connections_.fetch_add(1);
+        LOG_DEBUG("收到新连接: {}", conn->peerAddress());
+    } else {
+        // TcpConnection 在关闭阶段也会触发 connectionCallback，这里按状态做对称计数
+        uint64_t curr = current_connections_.load();
+        if (curr > 0) {
+            current_connections_.fetch_sub(1);
+        }
+        LOG_DEBUG("连接已关闭: {}", conn->peerAddress());
+    }
     
     // 暂时禁用欢迎消息，避免干扰测试
     // auto welcome = RESPSerializer::serializeSimpleString("SunKV 1.0.0");
@@ -415,6 +423,7 @@ void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
 void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
     total_commands_.fetch_add(1);
     total_operations_.fetch_add(1);
+    profile_message_count_.fetch_add(1);
     
     try {
         // 正确转换 Buffer 到字符串
@@ -422,20 +431,23 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         std::string message = buffer->retrieveAsString(len);
         LOG_DEBUG("收到来自 {} 的消息: {}", conn->peerAddress(), message);
         
-        for (size_t i = 0; i < len && i < 20; ++i) {
-            std::cerr << std::hex << (int)(unsigned char)message[i] << " ";
-        }
-        std::cerr << std::dec << std::endl;
-        
         // 解析 RESP 命令
         
         // 使用真正的 RESP 解析器
-        auto parser = std::make_unique<RESPParser>();
-        auto result = parser->parse(message);
+        auto parse_begin = std::chrono::steady_clock::now();
+        RESPParser parser;
+        auto result = parser.parse(message);
+        auto parse_end = std::chrono::steady_clock::now();
+        profile_parse_ns_.fetch_add(
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(parse_end - parse_begin).count()));
         
         
         if (result.success && result.complete && result.value) {
+            auto process_begin = std::chrono::steady_clock::now();
             processCommand(conn, result.value);
+            auto process_end = std::chrono::steady_clock::now();
+            profile_process_ns_.fetch_add(
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(process_end - process_begin).count()));
             return;
         } else if (!result.complete) {
             return; // 等待更多数据
@@ -462,9 +474,8 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
 }
 
 void Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) {
-    current_connections_.fetch_sub(1);
-    
-    LOG_INFO("连接已关闭: {}", conn->peerAddress());
+    (void)conn;
+    // 当前连接统计已在 onConnection(conn->connected()==false) 路径中处理
     updateStats();
 }
 
@@ -490,6 +501,92 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "PING") {
                         auto pong = RESPSerializer::serializeSimpleString("PONG");
                         conn->send(pong.data(), pong.size());
+                        return;
+                    }
+
+                    // 高频命令快速路径：在进入长分支链前优先处理
+                    if (cmd_name == "SET" && cmd_array.size() >= 3) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING &&
+                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
+                            std::string key = key_bulk->getValue();
+                            std::string value = value_bulk->getValue();
+
+                            {
+                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                                multi_storage_[key] = DataValue(value);
+                            }
+
+                            if (wal_manager_) {
+                                wal_manager_->write_set(key, value);
+                            }
+
+                            auto ok = RESPSerializer::serializeSimpleString("OK");
+                            conn->send(ok.data(), ok.size());
+                            return;
+                        }
+                    }
+
+                    if (cmd_name == "GET" && cmd_array.size() >= 2) {
+                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
+                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                            std::string key = key_bulk->getValue();
+
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            auto it = multi_storage_.find(key);
+                            if (it == multi_storage_.end() || it->second.type != DataType::STRING || it->second.isExpired()) {
+                                auto nil = RESPSerializer::serializeNullBulkString();
+                                conn->send(nil.data(), nil.size());
+                                return;
+                            }
+
+                            auto response = RESPSerializer::serializeBulkString(it->second.string_value);
+                            conn->send(response.data(), response.size());
+                            return;
+                        }
+                    }
+
+                    if (cmd_name == "DEL" && cmd_array.size() >= 2) {
+                        int deleted_count = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            for (size_t i = 1; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    std::string key = key_bulk->getValue();
+                                    auto it = multi_storage_.find(key);
+                                    if (it != multi_storage_.end()) {
+                                        multi_storage_.erase(it);
+                                        deleted_count++;
+                                        if (wal_manager_) {
+                                            wal_manager_->write_del(key);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        auto response = RESPSerializer::serializeInteger(deleted_count);
+                        conn->send(response.data(), response.size());
+                        return;
+                    }
+
+                    if (cmd_name == "EXISTS" && cmd_array.size() >= 2) {
+                        int exists_count = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            for (size_t i = 1; i < cmd_array.size(); ++i) {
+                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
+                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
+                                    std::string key = key_bulk->getValue();
+                                    if (simple_storage_.find(key) != simple_storage_.end()) {
+                                        exists_count++;
+                                    }
+                                }
+                            }
+                        }
+                        auto response = RESPSerializer::serializeInteger(exists_count);
+                        conn->send(response.data(), response.size());
                         return;
                     }
 
@@ -549,99 +646,6 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto error = RESPSerializer::serializeError("Snapshot creation failed");
                             conn->send(error.data(), error.size());
                         }
-                        return;
-                    }
-                    
-                    if (cmd_name == "SET" && cmd_array.size() >= 3) {
-                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING && 
-                            cmd_array[2] && cmd_array[2]->getType() == RESPType::BULK_STRING) {
-                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
-                            auto* value_bulk = static_cast<RESPBulkString*>(cmd_array[2].get());
-                            std::string key = key_bulk->getValue();
-                            std::string value = value_bulk->getValue();
-                            
-                            {
-                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
-                                multi_storage_[key] = DataValue(value);  // 创建新的字符串值，默认无 TTL
-                            }
-                            
-                            // 记录到 WAL
-                            if (wal_manager_) {
-                                wal_manager_->write_set(key, value);
-                            }
-                            
-                            auto ok = RESPSerializer::serializeSimpleString("OK");
-                            conn->send(ok.data(), ok.size());
-                            return;
-                        }
-                    }
-                    
-                    if (cmd_name == "GET" && cmd_array.size() >= 2) {
-                        if (cmd_array[1] && cmd_array[1]->getType() == RESPType::BULK_STRING) {
-                            auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
-                            std::string key = key_bulk->getValue();
-                            
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
-                            auto it = multi_storage_.find(key);
-                            if (it == multi_storage_.end() || it->second.type != DataType::STRING || it->second.isExpired()) {
-                                if (it != multi_storage_.end() && it->second.isExpired()) {
-                                    multi_storage_.erase(it);  // 删除过期键
-                                    expired_keys_cleaned_++;
-                                }
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
-                                return;
-                            }
-                            
-                            auto response = RESPSerializer::serializeBulkString(it->second.string_value);
-                            conn->send(response.data(), response.size());
-                            return;
-                        }
-                    }
-                    
-                    if (cmd_name == "DEL" && cmd_array.size() >= 2) {
-                        int deleted_count = 0;
-                        {
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
-                            for (size_t i = 1; i < cmd_array.size(); ++i) {
-                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
-                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
-                                    std::string key = key_bulk->getValue();
-                                    auto it = multi_storage_.find(key);
-                                    if (it != multi_storage_.end()) {
-                                        multi_storage_.erase(it);
-                                        deleted_count++;
-                                        
-                                        // 记录到 WAL
-                                        if (wal_manager_) {
-                                            wal_manager_->write_del(key);
-                                        }
-                                    } else {
-                                    }
-                                }
-                            }
-                        }
-                        auto response = RESPSerializer::serializeInteger(deleted_count);
-                        conn->send(response.data(), response.size());
-                        return;
-                    }
-                    
-                    if (cmd_name == "EXISTS" && cmd_array.size() >= 2) {
-                        int exists_count = 0;
-                        {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                            for (size_t i = 1; i < cmd_array.size(); ++i) {
-                                if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
-                                    auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
-                                    std::string key = key_bulk->getValue();
-                                    if (simple_storage_.find(key) != simple_storage_.end()) {
-                                        exists_count++;
-                                    }
-                                }
-                            }
-                        }
-                        auto response = RESPSerializer::serializeInteger(exists_count);
-                        conn->send(response.data(), response.size());
                         return;
                     }
                     
@@ -1322,6 +1326,14 @@ std::string Server::buildStatsReport() {
         << "memory_pool.release=" << pool_stats.release_count << "\n"
         << "memory_pool.discard=" << pool_stats.discard_count << "\n"
         << "memory_pool.cached_blocks=" << pool_stats.cached_block_count;
+    uint64_t msg_count = profile_message_count_.load();
+    if (msg_count > 0) {
+        double avg_parse_us = static_cast<double>(profile_parse_ns_.load()) / static_cast<double>(msg_count) / 1000.0;
+        double avg_process_us = static_cast<double>(profile_process_ns_.load()) / static_cast<double>(msg_count) / 1000.0;
+        oss << "\nprofile.message_count=" << msg_count
+            << "\nprofile.avg_parse_us=" << avg_parse_us
+            << "\nprofile.avg_process_us=" << avg_process_us;
+    }
     return oss.str();
 }
 
@@ -1362,8 +1374,10 @@ void Server::gracefulShutdown() {
     std::cerr << "DEBUG: 等待连接关闭, current=" 
               << current_connections_.load() << std::endl;
     while (current_connections_.load() > 0 && wait_count < max_wait_count) {
-        LOG_INFO("等待 {} 个连接关闭... ({}/30s)", 
-                 current_connections_.load(), wait_count / 10);
+        if (wait_count % 10 == 0) {
+            LOG_INFO("等待 {} 个连接关闭... ({}/30s)", 
+                     current_connections_.load(), wait_count / 10);
+        }
         std::cerr << "DEBUG: 继续等待, connections=" << current_connections_.load() 
                   << ", count=" << wait_count << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
