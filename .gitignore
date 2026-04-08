@@ -45,3 +45,6 @@ Makefile
 # Configuration files (if any)
 config.json
 *.conf
+
+# Runtime data
+data/snapshot/*.snap

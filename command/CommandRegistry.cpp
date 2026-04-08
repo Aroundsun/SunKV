@@ -1,43 +1,61 @@
 #include "CommandRegistry.h"
-#include "storage/StorageEngine.h"
-#include "../protocol/RESPType.h"
+#include <algorithm>
+#include "commands/DelCommand.h"
+#include "commands/EchoCommand.h"
+#include "commands/ExistsCommand.h"
+#include "commands/GetCommand.h"
+#include "commands/PingCommand.h"
+#include "commands/SetCommand.h"
+
+CommandRegistry& CommandRegistry::getInstance() {
+    static CommandRegistry instance;
+    return instance;
+}
 
 CommandRegistry::CommandRegistry() {
-    // 暂时不注册任何命令
+    registerBuiltInCommands();
 }
 
-void CommandRegistry::registerCommand(const std::string& name, std::unique_ptr<Command> command) {
-    if (command) {
-        commands_[name] = std::move(command);
+void CommandRegistry::registerCommand(const std::string& name, CommandCreator creator) {
+    if (name.empty() || !creator) {
+        return;
     }
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    creators_[lower] = std::move(creator);
 }
 
-Command* CommandRegistry::findCommand(const std::string& name) {
-    auto it = commands_.find(name);
-    return (it != commands_.end()) ? it->second.get() : nullptr;
+bool CommandRegistry::hasCommand(const std::string& name) const {
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return creators_.find(lower) != creators_.end();
 }
 
-CommandResult CommandRegistry::executeCommand(const RESPValue& command, StorageEngine& storage) {
-    // 暂时返回一个简单的 PONG 响应，不管输入什么
-    return CommandResult(true, makeSimpleString("PONG"));
+std::unique_ptr<Command> CommandRegistry::createCommand(const std::string& name) const {
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    auto it = creators_.find(lower);
+    if (it == creators_.end()) {
+        return nullptr;
+    }
+    return it->second();
 }
 
-std::vector<std::string> CommandRegistry::getAllCommandNames() const {
+std::vector<std::string> CommandRegistry::getAllCommands() const {
     std::vector<std::string> names;
-    names.reserve(commands_.size());
-    
-    for (const auto& pair : commands_) {
+    names.reserve(creators_.size());
+    for (const auto& pair : creators_) {
         names.push_back(pair.first);
     }
-    
+    std::sort(names.begin(), names.end());
     return names;
 }
 
-size_t CommandRegistry::getCommandCount() const {
-    return commands_.size();
-}
-
-template<typename CommandType>
-void CommandRegistry::registerCommandType(const std::string& name) {
-    registerCommand(name, std::make_unique<CommandType>());
+void CommandRegistry::registerBuiltInCommands() {
+    registerCommand("ping", []() { return std::make_unique<PingCommand>(); });
+    registerCommand("echo", []() { return std::make_unique<EchoCommand>(); });
+    registerCommand("set", []() { return std::make_unique<SetCommand>(); });
+    registerCommand("get", []() { return std::make_unique<GetCommand>(); });
+    registerCommand("del", []() { return std::make_unique<DelCommand>(); });
+    registerCommand("exists", []() { return std::make_unique<ExistsCommand>(); });
 }

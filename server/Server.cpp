@@ -10,7 +10,6 @@
 #include <cerrno>
 #include <algorithm>
 #include <cctype>
-#include "../command/SimplePingCommand.h"
 #include "../network/Buffer.h"
 #include "../common/MemoryPool.h"
 
@@ -92,11 +91,6 @@ bool Server::start() {
     if (!initializeCommands()) {
         LOG_ERROR("命令系统初始化失败");
         return false;
-    }
-    
-    // 手动注册一个简单的 PING 命令
-    if (command_registry_) {
-        command_registry_->registerCommand("ping", std::make_unique<SimplePingCommand>());
     }
     
     if (!initializeNetwork()) {
@@ -1242,8 +1236,8 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
             }
         }
         
-        // 如果不支持的命令，返回错误
-        auto error = RESPSerializer::serializeError("Unsupported command");
+        // 如果不支持的命令，返回更兼容 Redis 的错误格式
+        auto error = RESPSerializer::serializeError("ERR unknown command");
         conn->send(error.data(), error.size());
         
     } catch (const std::exception& e) {
@@ -1266,7 +1260,7 @@ void Server::sendResponse(const std::shared_ptr<TcpConnection>& conn, const Comm
             }
         } else {
             // 错误响应
-            response = makeError(result.message);
+            response = makeError(result.error);
         }
         
         auto serialized = RESPSerializer::serialize(*response);

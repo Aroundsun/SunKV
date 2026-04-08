@@ -75,6 +75,7 @@ set(PROTOCOL_SOURCES
 set(COMMAND_SOURCES
     command/Command.cpp                   # 命令基类
     command/CommandRegistry.cpp           # 命令注册表
+    command/CommandDispatcher.cpp         # 命令分发器
 )
 
 # 存储模块源文件

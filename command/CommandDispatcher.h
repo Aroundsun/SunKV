@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Command.h"
+#include "CommandRegistry.h"
 #include <unordered_map>
 
 // 命令分发器
