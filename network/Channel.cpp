@@ -17,11 +17,11 @@ Channel::Channel(EventLoop* loop, int fd)
       tied_(false),
       eventHandling_(false),
       addedToLoop_(false) {
-    LOG_DEBUG("Channel created for fd {}", fd_);
+    LOG_DEBUG("Channel 已创建，fd={}", fd_);
 }
 
 Channel::~Channel() {
-    LOG_DEBUG("Channel destroyed for fd {}", fd_);
+    LOG_DEBUG("Channel 已销毁，fd={}", fd_);
     assert(!eventHandling_);
     assert(!addedToLoop_);
     if (loop_->isInLoopThread()) {
@@ -31,7 +31,7 @@ Channel::~Channel() {
 
 void Channel::handleEvent() {
     eventHandling_ = true;
-    LOG_DEBUG("Channel::handleEvent for fd {}, revents_ = {}", fd_, revents_);
+    LOG_DEBUG("Channel::handleEvent 处理事件，fd={}, revents_={}", fd_, revents_);
     
     // 如果有绑定的对象，提升引用
     std::shared_ptr<void> guard;

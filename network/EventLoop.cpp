@@ -20,7 +20,7 @@ EventLoop::EventLoop()
     
     std::ostringstream oss;
     oss << threadId_;
-    LOG_INFO("EventLoop created in thread {}", oss.str());
+    LOG_INFO("EventLoop 已创建，线程 {}", oss.str());
     
     // 创建并配置唤醒 Channel
     wakeupChannel_ = std::make_unique<Channel>(this, wakeupFd_);
@@ -34,7 +34,7 @@ EventLoop::~EventLoop() {
     
     std::ostringstream oss;
     oss << threadId_;
-    LOG_INFO("EventLoop destroyed in thread {}", oss.str());
+    LOG_INFO("EventLoop 已销毁，线程 {}", oss.str());
     
     // 在析构函数中直接调用 Poller 的方法，避免线程检查
     if (wakeupChannel_) {
@@ -54,7 +54,7 @@ void EventLoop::loop() {
     quit_ = false;
     std::ostringstream oss;
     oss << threadId_;
-    LOG_INFO("EventLoop {} start looping", oss.str());
+    LOG_INFO("EventLoop {} 开始循环", oss.str());
     
     while (!quit_) {
         // 等待事件
@@ -71,7 +71,7 @@ void EventLoop::loop() {
         doPendingTasks();
     }
     
-    LOG_INFO("EventLoop {} stop looping", oss.str());
+    LOG_INFO("EventLoop {} 停止循环", oss.str());
     looping_ = false;
 }
 
@@ -112,7 +112,7 @@ void EventLoop::wakeup() {
     if (n != sizeof(one)) {
         // 只在真正的错误时记录日志，忽略 EAGAIN
         if (n != -1 || errno != EAGAIN) {
-            LOG_ERROR("EventLoop::wakeup() writes {} bytes instead of 8, errno: {}", n, errno);
+            LOG_ERROR("EventLoop::wakeup() 写入字节数异常: {}, 期望 8, errno: {}", n, errno);
         }
     }
 }
@@ -148,7 +148,7 @@ void EventLoop::handleWakeup() {
     uint64_t one = 1;
     ssize_t n = read(wakeupFd_, &one, sizeof(one));
     if (n != sizeof(one)) {
-        LOG_ERROR("EventLoop::handleWakeup() reads {} bytes instead of 8", n);
+        LOG_ERROR("EventLoop::handleWakeup() 读取字节数异常: {}, 期望 8", n);
     }
 }
 
@@ -171,7 +171,7 @@ void EventLoop::doPendingTasks() {
 int EventLoop::createEventfd() {
     int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd < 0) {
-        LOG_ERROR("Failed to create eventfd: {}", strerror(errno));
+        LOG_ERROR("创建 eventfd 失败: {}", strerror(errno));
         exit(1);
     }
     return fd;
@@ -184,10 +184,10 @@ void EventLoop::assertInLoopThread() const {
         oss1 << threadId_;
         oss2 << threadId_;
         oss3 << std::this_thread::get_id();
-        LOG_ERROR("EventLoop::assertInLoopThread() - EventLoop {} was created in thread {} but current thread is {}", 
+        LOG_ERROR("EventLoop::assertInLoopThread() - EventLoop {} 创建于线程 {}，当前线程为 {}", 
                  oss1.str(), oss2.str(), oss3.str());
         // 不要调用 exit(1)，而是抛出异常
-        throw std::runtime_error("EventLoop called from wrong thread");
+        throw std::runtime_error("EventLoop 在错误线程中被调用");
     }
 }
 

@@ -1,21 +1,21 @@
 #include "WAL.h"
 #include "StorageEngine.h"
-#include "../server/Server.h"  // 为了获取 DataValue 定义
+#include "../server/Server.h"  // 用于获取 DataValue 定义
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
 #include <chrono>
 #include <iomanip>
-#include <unistd.h>  // for fsync
-#include <iostream>  // for debug
+#include <unistd.h>  // 用于 fsync
+#include <iostream>  // 用于调试输出
 
 // WAL 日志格式：
 // +----------------+----------------+----------------+----------------+
-// | Header (8 bytes) | Length (4 bytes) | Type (1 byte)  | TTL (8 bytes) |
+// | 头部(8字节) | 长度(4字节) | 类型(1字节) | TTL(8字节) |
 // +----------------+----------------+----------------+----------------+
-// | Key Length (4 bytes) | Value Length (4 bytes) | Checksum (4 bytes) |
+// | 键长度(4字节) | 值长度(4字节) | 校验和(4字节) |
 // +----------------+----------------+----------------+----------------+
-// | Key (variable) | Value (variable) |
+// | 键(变长) | 值(变长) |
 // +----------------+----------------+
 
 // 头部魔数和版本
@@ -307,7 +307,7 @@ size_t WALWriter::get_file_size() const {
         return 0;
     }
     
-    // 需要临时移除 const 限制来获取文件位置
+    // 需要临时去除 const 限制以获取文件位置
     auto& non_const_stream = const_cast<std::ofstream&>(file_stream_);
     auto current_pos = non_const_stream.tellp();
     return static_cast<size_t>(current_pos);
@@ -363,7 +363,7 @@ void WALWriter::sync_to_disk() {
     sync_count_++;
 }
 
-// WALReader 实现
+// WALReader 的实现
 
 WALReader::WALReader(const std::string& file_path)
     : file_path_(file_path), buffer_size_(64 * 1024),
@@ -550,7 +550,7 @@ size_t WALReader::get_position() const {
         return 0;
     }
     
-    // 需要临时移除 const 限制来获取文件位置
+    // 需要临时去除 const 限制以获取文件位置
     auto& non_const_stream = const_cast<std::ifstream&>(file_stream_);
     return static_cast<size_t>(non_const_stream.tellg());
 }
@@ -558,7 +558,7 @@ size_t WALReader::get_position() const {
 bool WALReader::read_all_entries(EntryCallback callback) {
     reset();
     
-    int max_entries = 1000;  // 防止无限循环
+    int max_entries = 1000;  // 防止出现无限循环
     int entry_count = 0;
     
     while (entry_count < max_entries) {
@@ -617,7 +617,7 @@ bool WALReader::read_from_buffer(size_t bytes, std::vector<uint8_t>& data) {
     return file_stream_.good();
 }
 
-// WALManager 实现
+// WALManager 的实现
 
 WALManager::WALManager(const std::string& wal_dir, size_t max_file_size)
     : wal_dir_(wal_dir), max_file_size_(max_file_size), current_sequence_(0), in_transaction_(false),
@@ -657,7 +657,7 @@ bool WALManager::initialize() {
         // 从文件名解析最大的序列号
         uint64_t max_seq = 0;
         for (const auto& file : wal_files) {
-            // 文件名格式：wal_<sequence>.log
+            // 文件名格式：wal_<序列号>.log
             size_t pos = file.find("wal_");
             if (pos != std::string::npos) {
                 size_t end_pos = file.find(".log");
@@ -694,7 +694,7 @@ bool WALManager::write_set(const std::string& key, const std::string& value, int
         return false;
     }
     
-    // 检查 current_writer_ 是否有效
+    // 检查 current_writer_ 是否可用
     if (!current_writer_) {
         return false;
     }
@@ -709,7 +709,7 @@ bool WALManager::write_set(const std::string& key, const std::string& value, int
     
     write_ops_++;
     
-    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
+    // 在锁保护下调用 write_entry，确保 current_writer_ 生命周期安全
     return current_writer_->write_entry(entry);
 }
 
@@ -721,7 +721,7 @@ bool WALManager::write_del(const std::string& key) {
         return false;
     }
     
-    // 检查 current_writer_ 是否有效
+    // 检查 current_writer_ 是否可用
     if (!current_writer_) {
         return false;
     }
@@ -734,7 +734,7 @@ bool WALManager::write_del(const std::string& key) {
     
     write_ops_++;
     
-    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
+    // 在锁保护下调用 write_entry，确保 current_writer_ 生命周期安全
     return current_writer_->write_entry(entry);
 }
 
@@ -746,7 +746,7 @@ bool WALManager::write_clear() {
         return false;
     }
     
-    // 检查 current_writer_ 是否有效
+    // 检查 current_writer_ 是否可用
     if (!current_writer_) {
         return false;
     }
@@ -758,7 +758,7 @@ bool WALManager::write_clear() {
     
     write_ops_++;
     
-    // 在锁保护下调用 write_entry，确保 current_writer_ 不会被销毁
+    // 在锁保护下调用 write_entry，确保 current_writer_ 生命周期安全
     return current_writer_->write_entry(entry);
 }
 

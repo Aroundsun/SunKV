@@ -16,20 +16,20 @@ Poller::Poller(EventLoop* loop)
       events_(kInitEventListSize) {
     
     if (epollFd_ < 0) {
-        LOG_ERROR("Failed to create epoll: {}", strerror(errno));
+        LOG_ERROR("创建 epoll 失败: {}", strerror(errno));
         exit(1);
     }
     
-    LOG_DEBUG("Poller created with epollFd {}", epollFd_);
+    LOG_DEBUG("Poller 已创建，epollFd={}", epollFd_);
 }
 
 Poller::~Poller() {
     ::close(epollFd_);
-    LOG_DEBUG("Poller destroyed");
+    LOG_DEBUG("Poller 已销毁");
 }
 
 int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
-    LOG_DEBUG("Poller::poll() waiting for events, timeout = {}ms", timeoutMs);
+    LOG_DEBUG("Poller::poll() 等待事件，timeout={}ms", timeoutMs);
     
     int numEvents = ::epoll_wait(epollFd_, 
                                 events_.data(), 
@@ -39,7 +39,7 @@ int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
     int savedErrno = errno;
     
     if (numEvents > 0) {
-        LOG_DEBUG("{} events happened", numEvents);
+        LOG_DEBUG("发生 {} 个事件", numEvents);
         fillActiveChannels(numEvents, activeChannels);
         
         // 如果事件数组满了，扩展数组
@@ -47,12 +47,12 @@ int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
             events_.resize(events_.size() * 2);
         }
     } else if (numEvents == 0) {
-        LOG_DEBUG("Poller::poll() timeout, nothing happened");
+        LOG_DEBUG("Poller::poll() 超时，没有事件");
     } else {
         // 不是被信号中断的错误
         if (savedErrno != EINTR) {
             errno = savedErrno;
-            LOG_ERROR("Poller::poll() error: {}", strerror(errno));
+            LOG_ERROR("Poller::poll() 出错: {}", strerror(errno));
         }
     }
     
@@ -61,7 +61,7 @@ int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
 
 void Poller::updateChannel(Channel* channel) {
     assertInLoopThread();
-    LOG_DEBUG("Poller::updateChannel fd = {}, events = {}", channel->fd(), channel->events());
+    LOG_DEBUG("Poller::updateChannel fd={}, events={}", channel->fd(), channel->events());
     
     const int index = channel->index();
     
@@ -96,7 +96,7 @@ void Poller::updateChannel(Channel* channel) {
 
 void Poller::removeChannel(Channel* channel) {
     assertInLoopThread();
-    LOG_DEBUG("Poller::removeChannel fd = {}", channel->fd());
+    LOG_DEBUG("Poller::removeChannel fd={}", channel->fd());
     
     int fd = channel->fd();
     assert(channels_.find(fd) != channels_.end());
@@ -139,10 +139,10 @@ void Poller::update(int operation, Channel* channel) {
     event.data.ptr = channel;
     int fd = channel->fd();
     
-    LOG_DEBUG("epoll_ctl op = {}, fd = {}, events = {}", operation, fd, channel->events());
+    LOG_DEBUG("epoll_ctl op={}, fd={}, events={}", operation, fd, channel->events());
     
     if (::epoll_ctl(epollFd_, operation, fd, &event) < 0) {
-        LOG_ERROR("epoll_ctl op = {} failed, fd = {}: {}", operation, fd, strerror(errno));
+        LOG_ERROR("epoll_ctl op={} 失败，fd={}: {}", operation, fd, strerror(errno));
     }
 }
 

@@ -26,7 +26,7 @@ CommandResult CommandDispatcher::dispatch(const std::string& commandName, const 
         // 执行命令
         return command->execute(args);
     } catch (const std::exception& e) {
-        LOG_ERROR("Command execution error: {}", e.what());
+        LOG_ERROR("命令执行错误: {}", e.what());
         return CommandResult::makeError("ERR internal server error");
     }
 }

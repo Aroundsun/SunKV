@@ -31,11 +31,11 @@ TcpConnection::TcpConnection(EventLoop* loop, const std::string& name, int sockf
     channel_->setErrorCallback(
         std::bind(&TcpConnection::handleError, this));
     
-    LOG_DEBUG("TcpConnection created {} - {}", localAddr_, peerAddr_);
+    LOG_DEBUG("TcpConnection 已创建 {} - {}", localAddr_, peerAddr_);
 }
 
 TcpConnection::~TcpConnection() {
-    LOG_DEBUG("TcpConnection destroyed {} - {}", localAddr_, peerAddr_);
+    LOG_DEBUG("TcpConnection 已销毁 {} - {}", localAddr_, peerAddr_);
     assert(state_ == TcpConnectionState::kDisconnected);
 }
 
@@ -113,7 +113,7 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
     bool faultError = false;
     
     if (state_ == TcpConnectionState::kDisconnected) {
-        LOG_WARN("TcpConnection::sendInLoop() disconnected, give up writing");
+        LOG_WARN("TcpConnection::sendInLoop() 连接已断开，放弃写入");
         return;
     }
     
@@ -129,7 +129,7 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
         } else {
             nwrote = 0;
             if (errno != EWOULDBLOCK) {
-                LOG_ERROR("TcpConnection::sendInLoop() write error: {}", strerror(errno));
+                LOG_ERROR("TcpConnection::sendInLoop() 写入错误: {}", strerror(errno));
                 if (errno == EPIPE || errno == ECONNRESET) {
                     faultError = true;
                 }
@@ -223,7 +223,7 @@ void TcpConnection::handleRead() {
         handleClose();
     } else {
         errno = savedErrno;
-        LOG_ERROR("TcpConnection::handleRead() read error: {}", strerror(errno));
+        LOG_ERROR("TcpConnection::handleRead() 读取错误: {}", strerror(errno));
         handleError();
     }
 }
@@ -245,16 +245,16 @@ void TcpConnection::handleWrite() {
                 }
             }
         } else {
-            LOG_ERROR("TcpConnection::handleWrite() write error: {}", strerror(errno));
+            LOG_ERROR("TcpConnection::handleWrite() 写入错误: {}", strerror(errno));
         }
     } else {
-        LOG_DEBUG("TcpConnection::handleWrite() connection is down, no more writing");
+        LOG_DEBUG("TcpConnection::handleWrite() 连接已关闭，不再写入");
     }
 }
 
 void TcpConnection::handleClose() {
     loop_->assertInLoopThread();
-    LOG_DEBUG("TcpConnection::handleClose() state = {}", static_cast<int>(state_.load()));
+    LOG_DEBUG("TcpConnection::handleClose() 状态 = {}", static_cast<int>(state_.load()));
     
     setState(TcpConnectionState::kDisconnected);
     channel_->disableAll();

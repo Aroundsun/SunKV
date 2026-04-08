@@ -24,19 +24,19 @@ void Socket::bindAddress(const std::string& addr, uint16_t port) {
         serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
     } else {
         if (inet_pton(AF_INET, addr.c_str(), &serverAddr.sin_addr) <= 0) {
-            LOG_ERROR("Invalid address: {}", addr);
+            LOG_ERROR("无效地址: {}", addr);
             return;
         }
     }
     
     if (::bind(sockfd_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        LOG_ERROR("Bind failed: {}", strerror(errno));
+        LOG_ERROR("绑定失败: {}", strerror(errno));
     }
 }
 
 void Socket::listen() {
     if (::listen(sockfd_, SOMAXCONN) < 0) {
-        LOG_ERROR("Listen failed: {}", strerror(errno));
+        LOG_ERROR("监听失败: {}", strerror(errno));
     }
 }
 
@@ -49,7 +49,7 @@ int Socket::accept() {
     if (connfd < 0) {
         int savedErrno = errno;
         if (savedErrno != EAGAIN && savedErrno != EWOULDBLOCK) {
-            LOG_ERROR("Accept failed: {}", strerror(savedErrno));
+            LOG_ERROR("接受连接失败: {}", strerror(savedErrno));
         }
     }
     
@@ -63,18 +63,18 @@ void Socket::connect(const std::string& addr, uint16_t port) {
     serverAddr.sin_port = htons(port);
     
     if (inet_pton(AF_INET, addr.c_str(), &serverAddr.sin_addr) <= 0) {
-        LOG_ERROR("Invalid address: {}", addr);
+        LOG_ERROR("无效地址: {}", addr);
         return;
     }
     
     if (::connect(sockfd_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        LOG_ERROR("Connect failed: {}", strerror(errno));
+        LOG_ERROR("连接失败: {}", strerror(errno));
     }
 }
 
 void Socket::shutdown() {
     if (::shutdown(sockfd_, SHUT_WR) < 0) {
-        LOG_ERROR("Shutdown failed: {}", strerror(errno));
+        LOG_ERROR("关闭写端失败: {}", strerror(errno));
     }
 }
 
@@ -103,7 +103,7 @@ std::string Socket::getLocalAddress() const {
     socklen_t addrLen = sizeof(localAddr);
     
     if (::getsockname(sockfd_, (struct sockaddr*)&localAddr, &addrLen) < 0) {
-        LOG_ERROR("Get local address failed: {}", strerror(errno));
+        LOG_ERROR("获取本地地址失败: {}", strerror(errno));
         return "";
     }
     
@@ -117,7 +117,7 @@ uint16_t Socket::getLocalPort() const {
     socklen_t addrLen = sizeof(localAddr);
     
     if (::getsockname(sockfd_, (struct sockaddr*)&localAddr, &addrLen) < 0) {
-        LOG_ERROR("Get local port failed: {}", strerror(errno));
+        LOG_ERROR("获取本地端口失败: {}", strerror(errno));
         return 0;
     }
     
@@ -129,7 +129,7 @@ std::string Socket::getPeerAddress() const {
     socklen_t addrLen = sizeof(peerAddr);
     
     if (::getpeername(sockfd_, (struct sockaddr*)&peerAddr, &addrLen) < 0) {
-        LOG_ERROR("Get peer address failed: {}", strerror(errno));
+        LOG_ERROR("获取对端地址失败: {}", strerror(errno));
         return "";
     }
     
@@ -143,7 +143,7 @@ uint16_t Socket::getPeerPort() const {
     socklen_t addrLen = sizeof(peerAddr);
     
     if (::getpeername(sockfd_, (struct sockaddr*)&peerAddr, &addrLen) < 0) {
-        LOG_ERROR("Get peer port failed: {}", strerror(errno));
+        LOG_ERROR("获取对端端口失败: {}", strerror(errno));
         return 0;
     }
     

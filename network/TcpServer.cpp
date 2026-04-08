@@ -70,7 +70,7 @@ void TcpServer::start() {
         loop_->runInLoop(
             std::bind(&Acceptor::listen, acceptor_.get()));
         
-        LOG_INFO("TcpServer {} started on {}:{}", name_, listenAddr_, listenPort_);
+        LOG_INFO("TcpServer {} 已启动，监听 {}:{}", name_, listenAddr_, listenPort_);
     }
 }
 
@@ -82,7 +82,7 @@ void TcpServer::newConnection(int sockfd, const std::string& localAddr, const st
     ++nextConnId_;
     std::string connName = name_ + buf;
     
-    LOG_INFO("TcpServer::newConnection [{}] - new connection [{}] from {} to {}", 
+    LOG_INFO("TcpServer::newConnection [{}] - 新连接 [{}]，来自 {} -> {}", 
              name_, connName, peerAddr, localAddr);
     
     // 从线程池中选择一个 EventLoop
@@ -109,7 +109,7 @@ void TcpServer::removeConnection(const std::shared_ptr<TcpConnection>& conn) {
 void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& conn) {
     loop_->assertInLoopThread();
     
-    LOG_INFO("TcpServer::removeConnectionInLoop [{}] - connection [{}]", name_, conn->name());
+    LOG_INFO("TcpServer::removeConnectionInLoop [{}] - 连接 [{}]", name_, conn->name());
     
     size_t n = connections_.erase(conn->name());
     assert(n == 1);
@@ -121,7 +121,7 @@ void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& con
 
 void TcpServer::stop() {
     if (started_.exchange(false)) {
-        LOG_INFO("TcpServer::stop [{}] - stopping server", name_);
+        LOG_INFO("TcpServer::stop [{}] - 正在停止服务器", name_);
         
         // 停止接受新连接
         if (acceptor_) {
@@ -139,6 +139,6 @@ void TcpServer::stop() {
             threadPool_->stop();
         }
         
-        LOG_INFO("TcpServer::stop [{}] - server stopped", name_);
+        LOG_INFO("TcpServer::stop [{}] - 服务器已停止", name_);
     }
 }

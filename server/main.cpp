@@ -28,7 +28,7 @@ public:
                 
                 // 检查进程是否仍在运行
                 if (kill(existing_pid, 0) == 0) {
-                    std::cerr << "SunKV is already running with PID " << existing_pid << std::endl;
+                    std::cerr << "SunKV 已在运行，PID: " << existing_pid << std::endl;
                     return false;
                 }
             }
@@ -80,8 +80,8 @@ int main(int argc, char* argv[]) {
             Logger::instance().setFile(config.log_file);
         }
         
-        LOG_INFO("SunKV Server v1.0.0 starting...");
-        LOG_INFO("Configuration loaded successfully");
+        LOG_INFO("SunKV Server v1.0.0 正在启动...");
+        LOG_INFO("配置加载成功");
         
         // 守护进程模式处理
         std::unique_ptr<PIDManager> pid_manager;
@@ -94,11 +94,11 @@ int main(int argc, char* argv[]) {
             
             // 守护进程
             if (daemon(0, 0) != 0) {
-                std::cerr << "Failed to daemonize" << std::endl;
+                std::cerr << "守护进程化失败" << std::endl;
                 return 1;
             }
             
-            LOG_INFO("Running in daemon mode");
+            LOG_INFO("当前以守护进程模式运行");
         } else {
         }
         
@@ -107,12 +107,12 @@ int main(int argc, char* argv[]) {
         
         // 启动服务器
         if (!server->start()) {
-            LOG_ERROR("Failed to start server");
+            LOG_ERROR("服务器启动失败");
             return 1;
         }
         
-        LOG_INFO("SunKV Server started successfully");
-        LOG_INFO("Listening on {}:{}", 
+        LOG_INFO("SunKV Server 启动成功");
+        LOG_INFO("监听地址 {}:{}", 
                  config.host, 
                  config.port);
         
@@ -122,32 +122,32 @@ int main(int argc, char* argv[]) {
         }
         
         // 主循环退出后执行优雅关闭
-        std::cerr << "DEBUG: Main loop exited, running=" << server->isRunning() 
+        std::cerr << "DEBUG: 主循环已退出, running=" << server->isRunning() 
                   << ", stopping=" << server->isStopping() << std::endl;
         
         try {
             if (server->isStopping()) {
-                std::cerr << "DEBUG: About to execute graceful shutdown..." << std::endl;
-                LOG_INFO("Executing graceful shutdown...");
+                std::cerr << "DEBUG: 即将执行优雅关闭..." << std::endl;
+                LOG_INFO("正在执行优雅关闭...");
                 server->stop();
-                std::cerr << "DEBUG: Graceful shutdown completed" << std::endl;
+                std::cerr << "DEBUG: 优雅关闭完成" << std::endl;
             } else {
-                LOG_INFO("Server stopped without graceful shutdown");
+                LOG_INFO("服务器停止（未经过优雅关闭流程）");
             }
         } catch (const std::exception& e) {
-            std::cerr << "ERROR: Exception during graceful shutdown: " << e.what() << std::endl;
+            std::cerr << "ERROR: 优雅关闭过程中发生异常: " << e.what() << std::endl;
         } catch (...) {
-            std::cerr << "ERROR: Unknown exception during graceful shutdown" << std::endl;
+            std::cerr << "ERROR: 优雅关闭过程中发生未知异常" << std::endl;
         }
         
-        LOG_INFO("SunKV Server stopped gracefully");
+        LOG_INFO("SunKV Server 已优雅停止");
         return 0;
         
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        std::cerr << "致命错误: " << e.what() << std::endl;
         return 1;
     } catch (...) {
-        std::cerr << "Unknown fatal error" << std::endl;
+        std::cerr << "未知致命错误" << std::endl;
         return 1;
     }
 }

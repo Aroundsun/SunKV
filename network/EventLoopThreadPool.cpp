@@ -19,7 +19,7 @@ EventLoopThreadPool::EventLoopThreadPool(EventLoop* baseLoop, const std::string&
 
 EventLoopThreadPool::~EventLoopThreadPool() {
     // EventLoopThread 的析构函数会自动停止线程
-    LOG_INFO("EventLoopThreadPool {} destroyed", name_);
+    LOG_INFO("EventLoopThreadPool {} 已销毁", name_);
 }
 
 void EventLoopThreadPool::start() {
@@ -82,7 +82,7 @@ std::vector<EventLoop*> EventLoopThreadPool::getAllLoops() {
 
 void EventLoopThreadPool::stop() {
     if (started_) {
-        LOG_INFO("EventLoopThreadPool::stop [{}] - stopping thread pool", name_);
+        LOG_INFO("EventLoopThreadPool::stop [{}] - 正在停止线程池", name_);
         
         // 通知所有 EventLoop 退出
         for (auto& loop : loops_) {
@@ -98,6 +98,6 @@ void EventLoopThreadPool::stop() {
         threads_.clear();
         started_ = false;
         
-        LOG_INFO("EventLoopThreadPool::stop [{}] - thread pool stopped", name_);
+        LOG_INFO("EventLoopThreadPool::stop [{}] - 线程池已停止", name_);
     }
 }

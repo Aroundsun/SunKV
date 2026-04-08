@@ -11,7 +11,7 @@ TimerQueue::TimerQueue(EventLoop* loop)
       timerfd_(createTimerfd()),
       timerfdChannel_(std::make_unique<Channel>(loop, timerfd_)) {
     
-    LOG_DEBUG("TimerQueue created with timerfd {}", timerfd_);
+    LOG_DEBUG("TimerQueue 已创建，timerfd={}", timerfd_);
     
     timerfdChannel_->setReadCallback(
         std::bind(&TimerQueue::handleRead, this));
@@ -22,7 +22,7 @@ TimerQueue::~TimerQueue() {
     timerfdChannel_->disableAll();
     timerfdChannel_->remove();
     close(timerfd_);
-    LOG_DEBUG("TimerQueue destroyed");
+    LOG_DEBUG("TimerQueue 已销毁");
 }
 
 int64_t TimerQueue::addTimer(const Timer::TimerCallback& cb, TimePoint when, Duration interval) {
@@ -38,7 +38,7 @@ int64_t TimerQueue::addTimer(const Timer::TimerCallback& cb, TimePoint when, Dur
     loop_->runInLoop(
         std::bind(&TimerQueue::insert, this, timer));
     
-    LOG_DEBUG("Timer added with id {}, expiration {}ms, interval {}ms", 
+    LOG_DEBUG("定时器已添加，id={}, 过期={}ms, 间隔={}ms", 
              timerId, 
              std::chrono::duration_cast<std::chrono::milliseconds>(when - Clock::now()).count(),
              interval.count());
@@ -63,7 +63,7 @@ void TimerQueue::cancel(int64_t timerId) {
                     }
                 }
                 
-                LOG_DEBUG("Timer {} cancelled", timerId);
+                LOG_DEBUG("定时器 {} 已取消", timerId);
             }
         });
 }
@@ -76,7 +76,7 @@ void TimerQueue::handleRead() {
     
     std::vector<Entry> expired = getExpired(now);
     
-    LOG_DEBUG("{} timers expired", expired.size());
+    LOG_DEBUG("共有 {} 个定时器到期", expired.size());
     
     // 执行过期定时器的回调
     for (const Entry& entry : expired) {
@@ -137,7 +137,7 @@ bool TimerQueue::insert(std::shared_ptr<Timer> timer) {
 int TimerQueue::createTimerfd() {
     int fd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (fd < 0) {
-        LOG_ERROR("Failed to create timerfd: {}", strerror(errno));
+        LOG_ERROR("创建 timerfd 失败: {}", strerror(errno));
         exit(1);
     }
     return fd;
@@ -147,7 +147,7 @@ void TimerQueue::readTimerfd() {
     uint64_t howmany;
     ssize_t n = ::read(timerfd_, &howmany, sizeof(howmany));
     if (n != sizeof(howmany)) {
-        LOG_ERROR("TimerQueue::readTimerfd() reads {} bytes instead of 8", n);
+        LOG_ERROR("TimerQueue::readTimerfd() 读取字节数异常: {}, 期望 8", n);
     }
 }
 
@@ -173,9 +173,9 @@ void TimerQueue::resetTimerfd(TimePoint when) {
     
     int ret = ::timerfd_settime(timerfd_, 0, &newValue, &oldValue);
     if (ret < 0) {
-        LOG_ERROR("timerfd_settime error: {}", strerror(errno));
+        LOG_ERROR("timerfd_settime 调用失败: {}", strerror(errno));
     }
     
-    LOG_DEBUG("Timerfd reset to expire in {}ms", 
+    LOG_DEBUG("Timerfd 已重置，将在 {}ms 后触发", 
              std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
 }

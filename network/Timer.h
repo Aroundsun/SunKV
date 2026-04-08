@@ -18,13 +18,13 @@ public:
           interval_(interval),
           repeat_(interval.count() > 0),
           sequence_(++s_numCreated_) {
-        LOG_DEBUG("Timer created with expiration {}ms, interval {}ms, repeat {}", 
+        LOG_DEBUG("Timer 已创建，过期={}ms, 间隔={}ms, repeat={}", 
                  std::chrono::duration_cast<std::chrono::milliseconds>(when - Clock::now()).count(),
                  interval.count(), repeat_);
     }
     
     ~Timer() {
-        LOG_DEBUG("Timer destroyed");
+        LOG_DEBUG("Timer 已销毁");
     }
     
     // 禁止拷贝和赋值

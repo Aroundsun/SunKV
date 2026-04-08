@@ -39,7 +39,7 @@ EventLoop* EventLoopThread::startLoop() {
 }
 
 void EventLoopThread::threadFunc() {
-    LOG_INFO("EventLoop thread {} starting", name_);
+    LOG_INFO("EventLoop 线程 {} 启动中", name_);
     
     EventLoop loop;
     
@@ -60,12 +60,12 @@ void EventLoopThread::threadFunc() {
         loop_ = nullptr;
     }
     
-    LOG_INFO("EventLoop thread {} stopped", name_);
+    LOG_INFO("EventLoop 线程 {} 已停止", name_);
 }
 
 void EventLoopThread::stop() {
     if (loop_) {
-        LOG_INFO("EventLoopThread::stop [{}] - stopping event loop", name_);
+        LOG_INFO("EventLoopThread::stop [{}] - 正在停止事件循环", name_);
         loop_->quit();
     }
     

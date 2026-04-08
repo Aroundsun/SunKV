@@ -58,16 +58,16 @@ Server::~Server() {
 bool Server::start() {
     #ifdef DEBUG
 #endif
-    LOG_INFO("Starting SunKV Server...");
+    LOG_INFO("正在启动 SunKV Server...");
     
     if (running_.load()) {
-        LOG_ERROR("Server is already running");
+        LOG_ERROR("服务器已在运行");
         return false;
     }
     
     // 验证配置
     if (!config_.validate()) {
-        LOG_ERROR("Invalid configuration");
+        LOG_ERROR("配置无效");
         return false;
     }
     
@@ -78,17 +78,17 @@ bool Server::start() {
     
     // 初始化各个模块
     if (!initializeStorage()) {
-        LOG_ERROR("Failed to initialize storage");
+        LOG_ERROR("存储初始化失败");
         return false;
     }
     
     if (!initializePersistence()) {
-        LOG_ERROR("Failed to initialize persistence");
+        LOG_ERROR("持久化初始化失败");
         return false;
     }
     
     if (!initializeCommands()) {
-        LOG_ERROR("Failed to initialize commands");
+        LOG_ERROR("命令系统初始化失败");
         return false;
     }
     
@@ -98,7 +98,7 @@ bool Server::start() {
     }
     
     if (!initializeNetwork()) {
-        LOG_ERROR("Failed to initialize network");
+        LOG_ERROR("网络初始化失败");
         return false;
     }
     
@@ -124,20 +124,20 @@ bool Server::start() {
 }
 
 void Server::stop() {
-    std::cerr << "DEBUG: Server::stop() entry point" << std::endl;
-    LOG_INFO("Server::stop() called, running={}, stopping={}", 
+    std::cerr << "DEBUG: 进入 Server::stop()" << std::endl;
+    LOG_INFO("调用 Server::stop()，running={}, stopping={}", 
              running_.load(), stopping_.load());
     
     // 检查是否已经执行过优雅关闭
     static std::atomic<bool> shutdown_executed{false};
     if (shutdown_executed.exchange(true)) {
-        LOG_INFO("Server::stop() graceful shutdown already executed");
-        std::cerr << "DEBUG: Server::stop() graceful shutdown already executed" << std::endl;
+        LOG_INFO("Server::stop() 优雅关闭已执行过");
+        std::cerr << "DEBUG: Server::stop() 优雅关闭已执行过" << std::endl;
         return;
     }
     
-    std::cerr << "DEBUG: Server::stop() proceeding with shutdown" << std::endl;
-    LOG_INFO("Stopping SunKV Server...");
+    std::cerr << "DEBUG: Server::stop() 开始执行关闭流程" << std::endl;
+    LOG_INFO("正在停止 SunKV Server...");
     stopping_.store(true);
     
     // 停止 TTL 清理线程
@@ -150,7 +150,7 @@ void Server::stop() {
     gracefulShutdown();
     
     running_.store(false);
-    LOG_INFO("SunKV Server stopped");
+    LOG_INFO("SunKV Server 已停止");
 }
 
 void Server::waitForStop() {
@@ -200,10 +200,10 @@ bool Server::initializeNetwork() {
         // 启动 TCP 服务器
         tcp_server_->start();
         
-        LOG_INFO("Network initialized successfully");
+        LOG_INFO("网络初始化成功");
         return true;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to initialize network: {}", e.what());
+        LOG_ERROR("网络初始化失败: {}", e.what());
         return false;
     }
 }
@@ -215,10 +215,10 @@ bool Server::initializeStorage() {
         
         // 配置存储引擎
         // 这里可以根据配置设置不同的缓存策略等
-        LOG_INFO("Storage initialized successfully");
+        LOG_INFO("存储初始化成功");
         return true;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to initialize storage: {}", e.what());
+        LOG_ERROR("存储初始化失败: {}", e.what());
         return false;
     }
 }
@@ -232,7 +232,7 @@ bool Server::initializePersistence() {
         );
         
         if (!wal_manager_->initialize()) {
-            LOG_ERROR("Failed to initialize WAL manager");
+            LOG_ERROR("WAL 管理器初始化失败");
             return false;
         }
         
@@ -242,7 +242,7 @@ bool Server::initializePersistence() {
         );
         
         if (!snapshot_manager_->initialize()) {
-            LOG_ERROR("Failed to initialize snapshot manager");
+            LOG_ERROR("快照管理器初始化失败");
             return false;
         }
         
@@ -275,10 +275,10 @@ bool Server::initializePersistence() {
             }
         }
         
-        LOG_INFO("Persistence initialized successfully");
+        LOG_INFO("持久化初始化成功");
         return true;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to initialize persistence: {}", e.what());
+        LOG_ERROR("持久化初始化失败: {}", e.what());
         return false;
     }
 }
@@ -293,14 +293,14 @@ bool Server::load_multi_type_snapshot(std::map<std::string, DataValue>& data) {
                 DataValue data_value(value);  // 创建字符串类型的 DataValue
                 data[key] = data_value;
             }
-            LOG_INFO("Converted {} string entries to multi-type format", string_data.size());
+            LOG_INFO("已将 {} 条字符串数据转换为多类型格式", string_data.size());
             return true;
         }
         
-        LOG_WARN("No snapshot data found");
+        LOG_WARN("未找到快照数据");
         return false;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to load multi-type snapshot: {}", e.what());
+        LOG_ERROR("加载多类型快照失败: {}", e.what());
         return false;
     }
 }
@@ -317,7 +317,7 @@ bool Server::create_multi_type_snapshot() {
         }
         return false;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to create multi-type snapshot: {}", e.what());
+        LOG_ERROR("创建多类型快照失败: {}", e.what());
         return false;
     }
 }
@@ -330,10 +330,10 @@ bool Server::initializeCommands() {
         // 注册所有命令
         // command_registry_->registerAllCommands(); // 暂时禁用
         
-        LOG_INFO("Commands initialized successfully");
+        LOG_INFO("命令系统初始化成功");
         return true;
     } catch (const std::exception& e) {
-        LOG_ERROR("Failed to initialize commands: {}", e.what());
+        LOG_ERROR("命令系统初始化失败: {}", e.what());
         return false;
     }
 }
@@ -361,14 +361,14 @@ void Server::setupConnectionCallbacks() {
     // 启动 TCP 服务器
     tcp_server_->start();
     
-    LOG_INFO("Connection callbacks set up successfully");
+    LOG_INFO("连接回调设置成功");
 }
 
 void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
     total_connections_.fetch_add(1);
     current_connections_.fetch_add(1);
     
-    LOG_INFO("New connection from {}", conn->peerAddress());
+    LOG_INFO("收到新连接: {}", conn->peerAddress());
     
     // 暂时禁用欢迎消息，避免干扰测试
     // auto welcome = RESPSerializer::serializeSimpleString("SunKV 1.0.0");
@@ -385,7 +385,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         // 正确转换 Buffer 到字符串
         Buffer* buffer = static_cast<Buffer*>(data);
         std::string message = buffer->retrieveAsString(len);
-        LOG_DEBUG("Received from {}: {}", conn->peerAddress(), message);
+        LOG_DEBUG("收到来自 {} 的消息: {}", conn->peerAddress(), message);
         
         for (size_t i = 0; i < len && i < 20; ++i) {
             std::cerr << std::hex << (int)(unsigned char)message[i] << " ";
@@ -418,7 +418,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             return;
         }
     } catch (const std::exception& e) {
-        LOG_ERROR("Error processing message from {}: {}", conn->peerAddress(), e.what());
+        LOG_ERROR("处理来自 {} 的消息时出错: {}", conn->peerAddress(), e.what());
         auto error = RESPSerializer::serializeError("Internal server error");
         conn->send(error.data(), error.size());
     }
@@ -429,7 +429,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
 void Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) {
     current_connections_.fetch_sub(1);
     
-    LOG_INFO("Connection closed: {}", conn->peerAddress());
+    LOG_INFO("连接已关闭: {}", conn->peerAddress());
     updateStats();
 }
 
@@ -1158,7 +1158,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
         conn->send(error.data(), error.size());
         
     } catch (const std::exception& e) {
-        LOG_ERROR("Error executing command: {}", e.what());
+        LOG_ERROR("执行命令出错: {}", e.what());
         auto error = RESPSerializer::serializeError("Command execution failed");
         conn->send(error.data(), error.size());
     }
@@ -1183,7 +1183,7 @@ void Server::sendResponse(const std::shared_ptr<TcpConnection>& conn, const Comm
         auto serialized = RESPSerializer::serialize(*response);
         conn->send(serialized.data(), serialized.size());
     } catch (const std::exception& e) {
-        LOG_ERROR("Error sending response: {}", e.what());
+        LOG_ERROR("发送响应出错: {}", e.what());
     }
 }
 
@@ -1193,7 +1193,7 @@ void Server::ttlCleanupThread() {
         try {
             cleanupExpiredKeys();
         } catch (const std::exception& e) {
-            std::cerr << "ERROR: TTL cleanup thread error: " << e.what() << std::endl;
+            std::cerr << "ERROR: TTL 清理线程异常: " << e.what() << std::endl;
         }
         
         // 每5秒清理一次
@@ -1218,99 +1218,99 @@ void Server::cleanupExpiredKeys() {
 }
 
 void Server::gracefulShutdown() {
-    LOG_INFO("Starting graceful shutdown...");
-    std::cerr << "DEBUG: gracefulShutdown() started" << std::endl;
+    LOG_INFO("开始执行优雅关闭...");
+    std::cerr << "DEBUG: gracefulShutdown() 已启动" << std::endl;
     
     // 1. 停止接受新连接
     if (tcp_server_) {
-        LOG_INFO("Stopping TCP server...");
-        std::cerr << "DEBUG: Stopping TCP server..." << std::endl;
+        LOG_INFO("正在停止 TCP 服务器...");
+        std::cerr << "DEBUG: 正在停止 TCP 服务器..." << std::endl;
         tcp_server_->stop();
-        std::cerr << "DEBUG: TCP server stopped" << std::endl;
+        std::cerr << "DEBUG: TCP 服务器已停止" << std::endl;
     }
     
     // 2. 停止主事件循环
     if (main_loop_) {
-        LOG_INFO("Stopping main event loop...");
-        std::cerr << "DEBUG: Stopping main event loop..." << std::endl;
+        LOG_INFO("正在停止主事件循环...");
+        std::cerr << "DEBUG: 正在停止主事件循环..." << std::endl;
         main_loop_->quit();
-        std::cerr << "DEBUG: Main event loop stopped" << std::endl;
+        std::cerr << "DEBUG: 主事件循环已停止" << std::endl;
     }
     
     // 3. 等待所有连接关闭（最多等待30秒）
     int wait_count = 0;
     const int max_wait_count = 300; // 30秒，每次100ms
-    std::cerr << "DEBUG: Waiting for connections to close, current=" 
+    std::cerr << "DEBUG: 等待连接关闭, current=" 
               << current_connections_.load() << std::endl;
     while (current_connections_.load() > 0 && wait_count < max_wait_count) {
-        LOG_INFO("Waiting for {} connections to close... ({}/30s)", 
+        LOG_INFO("等待 {} 个连接关闭... ({}/30s)", 
                  current_connections_.load(), wait_count / 10);
-        std::cerr << "DEBUG: Still waiting, connections=" << current_connections_.load() 
+        std::cerr << "DEBUG: 继续等待, connections=" << current_connections_.load() 
                   << ", count=" << wait_count << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         wait_count++;
     }
     
-    std::cerr << "DEBUG: Finished waiting for connections" << std::endl;
+    std::cerr << "DEBUG: 连接等待结束" << std::endl;
     
     if (current_connections_.load() > 0) {
-        LOG_WARN("Force closing remaining {} connections", current_connections_.load());
-        std::cerr << "DEBUG: Force closing remaining connections" << std::endl;
+        LOG_WARN("强制关闭剩余 {} 个连接", current_connections_.load());
+        std::cerr << "DEBUG: 正在强制关闭剩余连接" << std::endl;
     }
     
     // 4. 停止线程池
     if (thread_pool_) {
-        LOG_INFO("Stopping thread pool...");
-        std::cerr << "DEBUG: Stopping thread pool..." << std::endl;
+        LOG_INFO("正在停止线程池...");
+        std::cerr << "DEBUG: 正在停止线程池..." << std::endl;
         thread_pool_->stop();
-        std::cerr << "DEBUG: Thread pool stopped" << std::endl;
+        std::cerr << "DEBUG: 线程池已停止" << std::endl;
     }
     
     // 5. 停止 TTL 清理线程
     if (ttl_cleanup_thread_.joinable()) {
-        LOG_INFO("Stopping TTL cleanup thread...");
-        std::cerr << "DEBUG: Stopping TTL cleanup thread..." << std::endl;
+        LOG_INFO("正在停止 TTL 清理线程...");
+        std::cerr << "DEBUG: 正在停止 TTL 清理线程..." << std::endl;
         ttl_cleanup_running_.store(false);
         ttl_cleanup_thread_.join();
-        std::cerr << "DEBUG: TTL cleanup thread stopped" << std::endl;
+        std::cerr << "DEBUG: TTL 清理线程已停止" << std::endl;
     }
     
     // 6. 创建最终快照（使用多类型数据）
     if (snapshot_manager_ && storage_engine_) {
-        LOG_INFO("Creating final snapshot...");
-        std::cerr << "DEBUG: Creating final snapshot..." << std::endl;
+        LOG_INFO("正在创建最终快照...");
+        std::cerr << "DEBUG: 正在创建最终快照..." << std::endl;
         if (create_multi_type_snapshot()) {
-            LOG_INFO("Final snapshot created successfully");
-            std::cerr << "DEBUG: Final snapshot created successfully" << std::endl;
+            LOG_INFO("最终快照创建成功");
+            std::cerr << "DEBUG: 最终快照创建成功" << std::endl;
         } else {
-            LOG_WARN("Failed to create final snapshot");
-            std::cerr << "DEBUG: Failed to create final snapshot" << std::endl;
+            LOG_WARN("最终快照创建失败");
+            std::cerr << "DEBUG: 最终快照创建失败" << std::endl;
         }
     }
     
     // 7. 同步并关闭 WAL
     if (wal_manager_) {
-        LOG_INFO("Syncing WAL...");
-        std::cerr << "DEBUG: Syncing WAL..." << std::endl;
+        LOG_INFO("正在同步 WAL...");
+        std::cerr << "DEBUG: 正在同步 WAL..." << std::endl;
         if (wal_manager_->flush()) {
-            LOG_INFO("WAL synced successfully");
-            std::cerr << "DEBUG: WAL synced successfully" << std::endl;
+            LOG_INFO("WAL 同步成功");
+            std::cerr << "DEBUG: WAL 同步成功" << std::endl;
         } else {
-            LOG_ERROR("Failed to sync WAL");
-            std::cerr << "DEBUG: Failed to sync WAL" << std::endl;
+            LOG_ERROR("WAL 同步失败");
+            std::cerr << "DEBUG: WAL 同步失败" << std::endl;
         }
     }
     
     // 8. 清理存储引擎
     if (storage_engine_) {
-        LOG_INFO("Cleaning up storage engine...");
-        std::cerr << "DEBUG: Cleaning up storage engine..." << std::endl;
+        LOG_INFO("正在清理存储引擎...");
+        std::cerr << "DEBUG: 正在清理存储引擎..." << std::endl;
         storage_engine_->cleanup();
-        std::cerr << "DEBUG: Storage engine cleanup completed" << std::endl;
+        std::cerr << "DEBUG: 存储引擎清理完成" << std::endl;
     }
     
-    LOG_INFO("Graceful shutdown completed");
-    std::cerr << "DEBUG: gracefulShutdown() completed" << std::endl;
+    LOG_INFO("优雅关闭完成");
+    std::cerr << "DEBUG: gracefulShutdown() 完成" << std::endl;
 }
 
 void Server::updateStats() {

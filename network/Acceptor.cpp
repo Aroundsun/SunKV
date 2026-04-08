@@ -38,7 +38,7 @@ void Acceptor::listen() {
     acceptSocket_->listen();
     acceptChannel_->enableReading();
     
-    LOG_INFO("Acceptor listening on {}:{} - fd {}", listenAddr_, listenPort_, acceptSocket_->fd());
+    LOG_INFO("Acceptor 开始监听 {}:{} - fd {}", listenAddr_, listenPort_, acceptSocket_->fd());
 }
 
 void Acceptor::handleRead() {
@@ -57,7 +57,7 @@ void Acceptor::handleRead() {
             std::string peerAddrStr(buf);
             uint16_t peerPort = ntohs(peerAddr.sin_port);
             
-            LOG_DEBUG("New connection from {}:{}", peerAddrStr, peerPort);
+            LOG_DEBUG("新连接来自 {}:{}", peerAddrStr, peerPort);
             
             if (newConnectionCallback_) {
                 newConnectionCallback_(connfd, listenAddr_ + ":" + std::to_string(listenPort_), 
@@ -76,10 +76,10 @@ void Acceptor::handleRead() {
                 idleFd_ = ::accept(acceptSocket_->fd(), nullptr, nullptr);
                 ::close(idleFd_);
                 idleFd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
-                LOG_ERROR("Acceptor::handleRead() EMFILE, temporary close idleFd");
+                LOG_ERROR("Acceptor::handleRead() EMFILE，临时关闭 idleFd 处理连接");
                 break;
             } else {
-                LOG_ERROR("Acceptor::handleRead() accept error: {}", strerror(savedErrno));
+                LOG_ERROR("Acceptor::handleRead() 接收连接失败: {}", strerror(savedErrno));
                 break;
             }
         }
@@ -88,7 +88,7 @@ void Acceptor::handleRead() {
 
 void Acceptor::stop() {
     if (listening_) {
-        LOG_INFO("Acceptor::stop [{}:{}] - stopping acceptor", listenAddr_, listenPort_);
+        LOG_INFO("Acceptor::stop [{}:{}] - 正在停止接收器", listenAddr_, listenPort_);
         
         listening_ = false;
         
@@ -103,6 +103,6 @@ void Acceptor::stop() {
             acceptSocket_->shutdown();
         }
         
-        LOG_INFO("Acceptor::stop [{}:{}] - acceptor stopped", listenAddr_, listenPort_);
+        LOG_INFO("Acceptor::stop [{}:{}] - 接收器已停止", listenAddr_, listenPort_);
     }
 }
