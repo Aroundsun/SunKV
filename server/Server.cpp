@@ -8,8 +8,11 @@
 #include <filesystem>
 #include <cstdint>
 #include <cerrno>
+#include <algorithm>
+#include <cctype>
 #include "../command/SimplePingCommand.h"
 #include "../network/Buffer.h"
+#include "../common/MemoryPool.h"
 
 // 全局服务器实例，用于信号处理
 static Server* g_server = nullptr;
@@ -108,6 +111,12 @@ bool Server::start() {
     running_.store(true);
     stopping_.store(false);
     
+    // 启动周期统计线程（可配置）
+    if (config_.enable_periodic_stats_log) {
+        stats_report_running_.store(true);
+        stats_report_thread_ = std::thread(&Server::statsReportThread, this);
+    }
+    
     // 启动信号转发线程：从管道读取信号通知，再在普通线程上下文中触发停止
     signal_thread_running_.store(true);
     signal_thread_ = std::thread([this]() {
@@ -170,6 +179,12 @@ void Server::stop() {
     ttl_cleanup_running_.store(false);
     if (ttl_cleanup_thread_.joinable()) {
         ttl_cleanup_thread_.join();
+    }
+    
+    // 停止周期统计线程
+    stats_report_running_.store(false);
+    if (stats_report_thread_.joinable()) {
+        stats_report_thread_.join();
     }
     
     // 优雅关闭
@@ -481,6 +496,54 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "PING") {
                         auto pong = RESPSerializer::serializeSimpleString("PONG");
                         conn->send(pong.data(), pong.size());
+                        return;
+                    }
+
+                    if (cmd_name == "MONITOR" || cmd_name == "STATS") {
+                        auto resp = RESPSerializer::serializeBulkString(buildStatsReport());
+                        conn->send(resp.data(), resp.size());
+                        return;
+                    }
+
+                    if (cmd_name == "DEBUG") {
+                        if (cmd_array.size() < 2 || !cmd_array[1] || cmd_array[1]->getType() != RESPType::BULK_STRING) {
+                            auto err = RESPSerializer::serializeError("ERR wrong number of arguments for 'DEBUG' command");
+                            conn->send(err.data(), err.size());
+                            return;
+                        }
+
+                        auto* subcmd_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
+                        std::string subcmd = subcmd_bulk->getValue();
+                        std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+
+                        if (subcmd == "INFO") {
+                            auto resp = RESPSerializer::serializeBulkString(buildStatsReport());
+                            conn->send(resp.data(), resp.size());
+                            return;
+                        }
+
+                        if (subcmd == "RESETSTATS") {
+                            ThreadLocalBufferPool::instance().resetStats();
+                            auto ok = RESPSerializer::serializeSimpleString("OK");
+                            conn->send(ok.data(), ok.size());
+                            return;
+                        }
+
+                        auto err = RESPSerializer::serializeError("ERR unknown DEBUG subcommand");
+                        conn->send(err.data(), err.size());
+                        return;
+                    }
+
+                    if (cmd_name == "HEALTH") {
+                        bool healthy = running_.load() && !stopping_.load();
+                        if (healthy) {
+                            auto ok = RESPSerializer::serializeSimpleString("OK");
+                            conn->send(ok.data(), ok.size());
+                        } else {
+                            auto err = RESPSerializer::serializeError("UNHEALTHY");
+                            conn->send(err.data(), err.size());
+                        }
                         return;
                     }
                     
@@ -1240,6 +1303,42 @@ void Server::cleanupExpiredKeys() {
         } else {
             ++it;
         }
+    }
+}
+
+std::string Server::buildStatsReport() {
+    std::ostringstream oss;
+    auto stats = getStats();
+    size_t kv_size = 0;
+    {
+        std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+        kv_size = multi_storage_.size();
+    }
+
+    auto pool_stats = ThreadLocalBufferPool::instance().getStats();
+    oss << "uptime_seconds=" << stats.uptime_seconds << "\n"
+        << "total_connections=" << stats.total_connections << "\n"
+        << "current_connections=" << stats.current_connections << "\n"
+        << "total_commands=" << stats.total_commands << "\n"
+        << "total_operations=" << stats.total_operations << "\n"
+        << "kv_size=" << kv_size << "\n"
+        << "expired_keys_cleaned=" << expired_keys_cleaned_.load() << "\n"
+        << "memory_pool.hit=" << pool_stats.hit_count << "\n"
+        << "memory_pool.miss=" << pool_stats.miss_count << "\n"
+        << "memory_pool.release=" << pool_stats.release_count << "\n"
+        << "memory_pool.discard=" << pool_stats.discard_count << "\n"
+        << "memory_pool.cached_blocks=" << pool_stats.cached_block_count;
+    return oss.str();
+}
+
+void Server::statsReportThread() {
+    const int interval = std::max(1, config_.stats_log_interval_seconds);
+    while (stats_report_running_.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(interval));
+        if (!stats_report_running_.load()) {
+            break;
+        }
+        LOG_INFO("运行统计:\n{}", buildStatsReport());
     }
 }
 

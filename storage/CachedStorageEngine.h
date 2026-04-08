@@ -1,3 +1,16 @@
+/**
+ * @file CachedStorageEngine.h
+ * @brief SunKV 带缓存的存储引擎系统
+ * 
+ * 本文件包含带缓存功能的存储引擎实现，提供：
+ * - LRU (Least Recently Used) 缓存存储引擎
+ * - LFU (Least Frequently Used) 缓存存储引擎
+ * - ARC (Adaptive Replacement Cache) 缓存存储引擎
+ * - 统一的缓存存储引擎接口
+ * - 缓存统计和性能监控
+ * - 内存使用统计
+ */
+
 #pragma once
 
 #include "StorageEngine.h"
@@ -8,58 +21,152 @@
 #include <mutex>
 #include <chrono>
 
-// 缓存策略类型
+/**
+ * @enum CachePolicyType
+ * @brief 缓存策略类型枚举
+ * 
+ * 定义了支持的缓存策略类型
+ */
 enum class CachePolicyType {
-    LRU,
-    LFU,
-    ARC
+    LRU,    ///< 最近最少使用
+    LFU,    ///< 最少使用频率
+    ARC     ///< 自适应替换缓存
 };
 
-// 带缓存的存储引擎基类
+/**
+ * @class CachedStorageEngineBase
+ * @brief 带缓存的存储引擎基类
+ * 
+ * 定义了所有带缓存存储引擎必须实现的通用接口
+ */
 template<typename K, typename V>
 class CachedStorageEngineBase {
 public:
     virtual ~CachedStorageEngineBase() = default;
+    
+    /**
+     * @brief 获取值
+     * @param key 键
+     * @return 值
+     */
     virtual V get(const K& key) = 0;
+    
+    /**
+     * @brief 设置键值对
+     * @param key 键
+     * @param value 值
+     * @param ttl_ms 生存时间（毫秒），-1 表示永不过期
+     */
     virtual void set(const K& key, const V& value, int64_t ttl_ms = -1) = 0;
+    
+    /**
+     * @brief 删除键
+     * @param key 要删除的键
+     * @return 是否成功删除
+     */
     virtual bool del(const K& key) = 0;
+    
+    /**
+     * @brief 检查键是否存在
+     * @param key 要检查的键
+     * @return 是否存在
+     */
     virtual bool exists(const K& key) = 0;
+    
+    /**
+     * @brief 获取存储大小
+     * @return 存储项数量
+     */
     virtual size_t size() const = 0;
+    
+    /**
+     * @brief 获取缓存大小
+     * @return 缓存项数量
+     */
     virtual size_t cache_size() const = 0;
+    
+    /**
+     * @brief 获取缓存容量
+     * @return 缓存最大容量
+     */
     virtual size_t cache_capacity() const = 0;
+    
+    /**
+     * @brief 清空所有数据
+     */
     virtual void clear() = 0;
+    
+    /**
+     * @brief 清空缓存
+     */
     virtual void clear_cache() = 0;
+    
+    /**
+     * @brief 清理过期项
+     */
     virtual void cleanup_expired() = 0;
     
+    /**
+     * @brief 缓存统计信息结构
+     */
     struct CacheStats {
-        size_t cache_size;
-        size_t cache_capacity;
-        double cache_utilization;
-        size_t cache_hits;
-        size_t cache_misses;
-        size_t total_requests;
-        double hit_rate;
-        std::string policy_name;
-        std::string policy_extra_info;
+        size_t cache_size;           ///< 缓存大小
+        size_t cache_capacity;       ///< 缓存容量
+        double cache_utilization;    ///< 缓存利用率
+        size_t cache_hits;            ///< 缓存命中次数
+        size_t cache_misses;          ///< 缓存未命中次数
+        size_t total_requests;       ///< 总请求次数
+        double hit_rate;              ///< 命中率
+        std::string policy_name;      ///< 策略名称
+        std::string policy_extra_info; ///< 策略特定额外信息
     };
     
+    /**
+     * @brief 获取缓存统计信息
+     * @return 缓存统计信息
+     */
     virtual CacheStats get_cache_stats() const = 0;
+    
+    /**
+     * @brief 重置缓存统计信息
+     */
     virtual void reset_cache_stats() = 0;
+    
+    /**
+     * @brief 切换缓存策略
+     * @param new_type 新的缓存策略类型
+     */
     virtual void switch_cache_policy(CachePolicyType new_type) = 0;
     
+    /**
+     * @brief 内存统计信息结构
+     */
     struct MemoryStats {
-        size_t storage_memory;
-        size_t cache_memory;
-        size_t total_memory;
+        size_t storage_memory;  ///< 存储内存使用量
+        size_t cache_memory;     ///< 缓存内存使用量
+        size_t total_memory;     ///< 总内存使用量
     };
     
+    /**
+     * @brief 获取内存统计信息
+     * @return 内存统计信息
+     */
     virtual MemoryStats get_memory_stats() const = 0;
 };
 
-// LRU 缓存存储引擎特化
+/**
+ * @class CachedStorageEngineLRU
+ * @brief LRU 缓存存储引擎特化
+ * 
+ * 实现基于 LRU 策略的缓存存储引擎
+ */
 template<typename K, typename V>
 class CachedStorageEngineLRU : public CachedStorageEngineBase<K, V> {
 public:
+    /**
+     * @brief 构造函数
+     * @param cache_capacity 缓存容量
+     */
     explicit CachedStorageEngineLRU(size_t cache_capacity) : cache_(cache_capacity) {}
     
     V get(const K& key) override {
@@ -197,19 +304,28 @@ public:
     }
 
 private:
-    mutable std::mutex mutex_;
-    StorageEngine& storage_ = StorageEngine::getInstance();
-    LRUCache<K, V> cache_;
+    mutable std::mutex mutex_;                                    ///< 互斥锁，保证线程安全
+    StorageEngine& storage_ = StorageEngine::getInstance();        ///< 底层存储引擎实例
+    LRUCache<K, V> cache_;                                          ///< LRU 缓存实例
     
-    mutable size_t cache_hits_ = 0;
-    mutable size_t cache_misses_ = 0;
-    mutable size_t total_requests_ = 0;
+    mutable size_t cache_hits_ = 0;                                ///< 缓存命中次数
+    mutable size_t cache_misses_ = 0;                              ///< 缓存未命中次数
+    mutable size_t total_requests_ = 0;                            ///< 总请求次数
 };
 
-// LFU 缓存存储引擎特化
+/**
+ * @class CachedStorageEngineLFU
+ * @brief LFU 缓存存储引擎特化
+ * 
+ * 实现基于 LFU 策略的缓存存储引擎
+ */
 template<typename K, typename V>
 class CachedStorageEngineLFU : public CachedStorageEngineBase<K, V> {
 public:
+    /**
+     * @brief 构造函数
+     * @param cache_capacity 缓存容量
+     */
     explicit CachedStorageEngineLFU(size_t cache_capacity) : cache_(cache_capacity) {}
     
     V get(const K& key) override {
@@ -336,19 +452,28 @@ public:
     }
 
 private:
-    mutable std::mutex mutex_;
-    StorageEngine& storage_ = StorageEngine::getInstance();
-    LFUCache<K, V> cache_;
+    mutable std::mutex mutex_;                                    ///< 互斥锁，保证线程安全
+    StorageEngine& storage_ = StorageEngine::getInstance();        ///< 底层存储引擎实例
+    LFUCache<K, V> cache_;                                          ///< LFU 缓存实例
     
-    mutable size_t cache_hits_ = 0;
-    mutable size_t cache_misses_ = 0;
-    mutable size_t total_requests_ = 0;
+    mutable size_t cache_hits_ = 0;                                ///< 缓存命中次数
+    mutable size_t cache_misses_ = 0;                              ///< 缓存未命中次数
+    mutable size_t total_requests_ = 0;                            ///< 总请求次数
 };
 
-// ARC 缓存存储引擎特化
+/**
+ * @class CachedStorageEngineARC
+ * @brief ARC 缓存存储引擎特化
+ * 
+ * 实现基于 ARC 策略的缓存存储引擎
+ */
 template<typename K, typename V>
 class CachedStorageEngineARC : public CachedStorageEngineBase<K, V> {
 public:
+    /**
+     * @brief 构造函数
+     * @param cache_capacity 缓存容量
+     */
     explicit CachedStorageEngineARC(size_t cache_capacity) : cache_(cache_capacity) {}
     
     V get(const K& key) override {
@@ -477,19 +602,30 @@ public:
     }
 
 private:
-    mutable std::mutex mutex_;
-    StorageEngine& storage_ = StorageEngine::getInstance();
-    ARCCache<K, V> cache_;
+    mutable std::mutex mutex_;                                    ///< 互斥锁，保证线程安全
+    StorageEngine& storage_ = StorageEngine::getInstance();        ///< 底层存储引擎实例
+    ARCCache<K, V> cache_;                                          ///< ARC 缓存实例
     
-    mutable size_t cache_hits_ = 0;
-    mutable size_t cache_misses_ = 0;
-    mutable size_t total_requests_ = 0;
+    mutable size_t cache_hits_ = 0;                                ///< 缓存命中次数
+    mutable size_t cache_misses_ = 0;                              ///< 缓存未命中次数
+    mutable size_t total_requests_ = 0;                            ///< 总请求次数
 };
 
-// 缓存存储引擎工厂
+/**
+ * @class CachedStorageEngine
+ * @brief 缓存存储引擎工厂
+ * 
+ * 提供创建不同缓存策略存储引擎实例的工厂方法
+ */
 template<typename K, typename V>
 class CachedStorageEngine {
 public:
+    /**
+     * @brief 创建缓存存储引擎实例
+     * @param cache_capacity 缓存容量
+     * @param policy_type 缓存策略类型（默认为 LRU）
+     * @return 缓存存储引擎实例
+     */
     static std::unique_ptr<CachedStorageEngineBase<K, V>> create(size_t cache_capacity, 
                                                                CachePolicyType policy_type = CachePolicyType::LRU) {
         switch (policy_type) {

@@ -75,7 +75,9 @@ bool Config::saveToFile(const std::string& filename) const {
     file << "[logging]\n";
     file << "log_level = " << log_level << "\n";
     file << "log_file = " << log_file << "\n";
-    file << "enable_console_log = " << (enable_console_log ? "true" : "false") << "\n\n";
+    file << "enable_console_log = " << (enable_console_log ? "true" : "false") << "\n";
+    file << "enable_periodic_stats_log = " << (enable_periodic_stats_log ? "true" : "false") << "\n";
+    file << "stats_log_interval_seconds = " << stats_log_interval_seconds << "\n\n";
     
     file << "[ttl]\n";
     file << "ttl_cleanup_interval_seconds = " << ttl_cleanup_interval_seconds << "\n";
@@ -104,6 +106,12 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             loadFromFile(argv[++i]);
         } else if (arg == "--log-level" && i + 1 < argc) {
             log_level = argv[++i];
+        } else if (arg == "--enable-periodic-stats-log" && i + 1 < argc) {
+            std::string v = argv[++i];
+            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+            enable_periodic_stats_log = (v == "true" || v == "1" || v == "yes" || v == "on");
+        } else if (arg == "--stats-log-interval" && i + 1 < argc) {
+            stats_log_interval_seconds = std::stoi(argv[++i]);
         } else if (arg == "--help") {
             printUsage();
             exit(0);
@@ -178,6 +186,11 @@ bool Config::validate() const {
         valid = false;
     }
     
+    if (stats_log_interval_seconds <= 0) {
+        std::cerr << "Invalid stats_log_interval_seconds: " << stats_log_interval_seconds << std::endl;
+        valid = false;
+    }
+    
     return valid;
 }
 
@@ -205,6 +218,8 @@ void Config::print() const {
     std::cout << "  Log Level: " << log_level << std::endl;
     std::cout << "  Log File: " << log_file << std::endl;
     std::cout << "  Console Log: " << (enable_console_log ? "Yes" : "No") << std::endl;
+    std::cout << "  Periodic Stats Log: " << (enable_periodic_stats_log ? "Yes" : "No") << std::endl;
+    std::cout << "  Stats Log Interval: " << stats_log_interval_seconds << " s" << std::endl;
     
     std::cout << "=========================" << std::endl;
 }
@@ -253,6 +268,8 @@ void Config::applyConfig() {
     log_level = getString("log_level", log_level);
     log_file = getString("log_file", log_file);
     enable_console_log = getBool("enable_console_log", enable_console_log);
+    enable_periodic_stats_log = getBool("enable_periodic_stats_log", enable_periodic_stats_log);
+    stats_log_interval_seconds = getInt("stats_log_interval_seconds", stats_log_interval_seconds);
     
     ttl_cleanup_interval_seconds = getInt("ttl_cleanup_interval_seconds", ttl_cleanup_interval_seconds);
     max_ttl_seconds = getInt("max_ttl_seconds", max_ttl_seconds);
@@ -270,5 +287,7 @@ void Config::printUsage() const {
     std::cout << "  --host <host>           Server host (default: 0.0.0.0)" << std::endl;
     std::cout << "  --data-dir <dir>        Data directory (default: ./data)" << std::endl;
     std::cout << "  --config <file>         Configuration file" << std::endl;
+    std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;
+    std::cout << "  --stats-log-interval <sec>          Stats log interval seconds" << std::endl;
     std::cout << "  --help                  Show this help message" << std::endl;
 }

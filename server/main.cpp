@@ -2,6 +2,9 @@
 #include <memory>
 #include <signal.h>
 #include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 #include "network/logger.h"
 #include "Server.h"
 #include "../common/Config.h"
@@ -56,6 +59,33 @@ private:
 };
 
 /**
+ * @brief 基于模板日志路径生成本次运行的独立日志文件
+ *
+ * 例如：./data/logs/sunkv.log -> ./data/logs/sunkv_20260408_211500.log
+ */
+static std::string buildRunLogFilePath(const std::string& base_log_file) {
+    if (base_log_file.empty()) {
+        return base_log_file;
+    }
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf{};
+    localtime_r(&t, &tm_buf);
+
+    std::ostringstream ts;
+    ts << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
+
+    std::filesystem::path p(base_log_file);
+    std::filesystem::path parent = p.parent_path();
+    std::string stem = p.stem().string();
+    std::string ext = p.extension().string();
+
+    std::filesystem::path run_file = parent / (stem + "_" + ts.str() + ext);
+    return run_file.string();
+}
+
+/**
  * @brief 主函数
  */
 int main(int argc, char* argv[]) {
@@ -77,7 +107,9 @@ int main(int argc, char* argv[]) {
         
         // 如果指定了日志文件，设置日志输出
         if (!config.log_file.empty()) {
-            Logger::instance().setFile(config.log_file);
+            std::string run_log_file = buildRunLogFilePath(config.log_file);
+            Logger::instance().setFile(run_log_file);
+            std::cout << "本次运行日志文件: " << run_log_file << std::endl;
         }
         
         LOG_INFO("SunKV Server v1.0.0 正在启动...");

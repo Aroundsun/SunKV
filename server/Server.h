@@ -182,6 +182,16 @@ private:
      * @brief 清理过期的键
      */
     void cleanupExpiredKeys();
+    
+    /**
+     * @brief 周期统计日志线程函数
+     */
+    void statsReportThread();
+    
+    /**
+     * @brief 构建统计信息文本
+     */
+    std::string buildStatsReport();
 
 private:
     Config config_;                    // 配置对象
@@ -211,6 +221,10 @@ private:
     std::thread ttl_cleanup_thread_;                  // TTL 清理线程
     std::atomic<bool> ttl_cleanup_running_{false};     // TTL 清理线程运行状态
     static constexpr int TTL_CLEANUP_INTERVAL_SECONDS = 5;  // 清理间隔（秒）
+    
+    // 统计输出线程
+    std::thread stats_report_thread_;
+    std::atomic<bool> stats_report_running_{false};
     
     // 信号处理转发线程（通过管道安全处理 SIGINT/SIGTERM）
     std::thread signal_thread_;
