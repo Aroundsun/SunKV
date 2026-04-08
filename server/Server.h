@@ -212,6 +212,10 @@ private:
     std::atomic<bool> ttl_cleanup_running_{false};     // TTL 清理线程运行状态
     static constexpr int TTL_CLEANUP_INTERVAL_SECONDS = 5;  // 清理间隔（秒）
     
+    // 信号处理转发线程（通过管道安全处理 SIGINT/SIGTERM）
+    std::thread signal_thread_;
+    std::atomic<bool> signal_thread_running_{false};
+    
     // 统计信息
     mutable std::mutex stats_mutex_;
     std::atomic<uint64_t> total_connections_{0};

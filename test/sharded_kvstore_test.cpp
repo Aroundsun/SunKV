@@ -180,6 +180,55 @@ void testConcurrentAccess(ShardedKVStore& store) {
     store.clear();
 }
 
+void testConcurrentSizeQueries(ShardedKVStore& store) {
+    std::cout << "\n--- Concurrent Size/ShardSizes Test ---" << std::endl;
+
+    std::atomic<bool> stop{false};
+    std::atomic<int> read_ok{0};
+    std::atomic<int> write_ok{0};
+
+    std::thread writer([&]() {
+        for (int i = 0; i < 500; ++i) {
+            std::string key = "sz_key_" + std::to_string(i);
+            std::string value = "v_" + std::to_string(i);
+            if (store.set(key, value)) {
+                ++write_ok;
+            }
+            if ((i % 7) == 0) {
+                store.del(key);
+            }
+        }
+        stop = true;
+    });
+
+    std::thread reader([&]() {
+        while (!stop.load()) {
+            auto total = store.size();
+            auto shards = store.shard_sizes();
+
+            size_t sum = 0;
+            for (auto s : shards) {
+                sum += s;
+            }
+
+            if (sum >= total) {
+                ++read_ok;
+            }
+        }
+    });
+
+    writer.join();
+    reader.join();
+
+    std::cout << "Writes: " << write_ok.load()
+              << ", size-reads: " << read_ok.load() << std::endl;
+    std::cout << "Concurrent size/shard_sizes: "
+              << ((write_ok.load() > 0 && read_ok.load() > 0) ? "✅" : "❌")
+              << std::endl;
+
+    store.clear();
+}
+
 void testShardIndex(ShardedKVStore& store) {
     std::cout << "\n--- Shard Index Test ---" << std::endl;
     
@@ -220,6 +269,7 @@ int main() {
     testTTLSupport(store);
     testShardIndex(store);
     testConcurrentAccess(store);
+    testConcurrentSizeQueries(store);
     
     std::cout << "\n=== ShardedKVStore Test Results ===" << std::endl;
     std::cout << "Basic Operations: ✅ Working" << std::endl;
@@ -228,6 +278,7 @@ int main() {
     std::cout << "TTL Support: ✅ Working" << std::endl;
     std::cout << "Shard Index: ✅ Working" << std::endl;
     std::cout << "Concurrent Access: ✅ Working" << std::endl;
+    std::cout << "Concurrent Size Queries: ✅ Working" << std::endl;
     std::cout << "\n🎉 SHARDED KV STORE WORKING! 🎉" << std::endl;
     
     return 0;

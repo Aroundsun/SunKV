@@ -6,24 +6,23 @@
 #include <sstream>
 #include <unistd.h>
 #include <filesystem>
+#include <cstdint>
+#include <cerrno>
 #include "../command/SimplePingCommand.h"
 #include "../network/Buffer.h"
 
 // 全局服务器实例，用于信号处理
 static Server* g_server = nullptr;
-static int pipe_fds[2];
+static int pipe_fds[2] = {-1, -1};
 
 /**
  * @brief 信号处理函数
  */
 void signalHandler(int signal) {
-    if (g_server) {
-        write(STDOUT_FILENO, "Received shutdown signal\n", 24);
-        write(STDOUT_FILENO, "Calling stop() method\n", 22);
-        // 直接在信号处理中设置停止标志
-        g_server->setStopping();
-        g_server->stopMainLoop();
-        write(STDOUT_FILENO, "Signal handler completed\n", 26);
+    if (g_server && pipe_fds[1] >= 0) {
+        // 信号处理函数中仅做异步信号安全操作：写管道通知
+        uint8_t sig = static_cast<uint8_t>(signal);
+        (void)!write(pipe_fds[1], &sig, sizeof(sig));
     }
 }
 
@@ -109,6 +108,24 @@ bool Server::start() {
     running_.store(true);
     stopping_.store(false);
     
+    // 启动信号转发线程：从管道读取信号通知，再在普通线程上下文中触发停止
+    signal_thread_running_.store(true);
+    signal_thread_ = std::thread([this]() {
+        uint8_t sig = 0;
+        while (signal_thread_running_.load()) {
+            ssize_t n = read(pipe_fds[0], &sig, sizeof(sig));
+            if (n == static_cast<ssize_t>(sizeof(sig))) {
+                if (!signal_thread_running_.load()) {
+                    break;
+                }
+                this->setStopping();
+                this->stopMainLoop();
+            } else if (n < 0 && errno == EINTR) {
+                continue;
+            }
+        }
+    });
+    
     // 启动主事件循环
     
     while (running_.load() && !stopping_.load()) {
@@ -139,6 +156,15 @@ void Server::stop() {
     std::cerr << "DEBUG: Server::stop() 开始执行关闭流程" << std::endl;
     LOG_INFO("正在停止 SunKV Server...");
     stopping_.store(true);
+    
+    // 停止信号转发线程并唤醒阻塞中的 read
+    if (signal_thread_running_.exchange(false)) {
+        uint8_t wake = 0;
+        (void)!write(pipe_fds[1], &wake, sizeof(wake));
+    }
+    if (signal_thread_.joinable()) {
+        signal_thread_.join();
+    }
     
     // 停止 TTL 清理线程
     ttl_cleanup_running_.store(false);

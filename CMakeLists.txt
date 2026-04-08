@@ -48,6 +48,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/server)              # 服务器
 
 # 网络模块源文件
 set(NETWORK_SOURCES
+    common/MemoryPool.cpp                 # 线程本地内存池
     network/Buffer.cpp                    # 缓冲区实现
     network/Channel.cpp                   # 事件通道
     network/EventLoop.cpp                 # 事件循环核心
@@ -166,6 +167,26 @@ elseif(BUILD_TEST)
         ${NETWORK_SOURCES}
     )
     target_link_libraries(network_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    # Buffer 优化测试 - 验证缓冲区复用与扩容行为
+    add_executable(buffer_optimization_test test/buffer_optimization_test.cpp
+        common/MemoryPool.cpp
+        network/Buffer.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(buffer_optimization_test
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    # 内存池测试 - 验证线程本地内存池分配与复用
+    add_executable(memory_pool_test test/memory_pool_test.cpp
+        common/MemoryPool.cpp
+    )
+    target_link_libraries(memory_pool_test
         Threads::Threads
         spdlog::spdlog
     )
@@ -290,6 +311,8 @@ elseif(BUILD_TEST)
     add_test(NAME TimerTest COMMAND timer_test)
     add_test(NAME EventLoopTest COMMAND eventloop_test)
     add_test(NAME NetworkTest COMMAND network_test)
+    add_test(NAME BufferOptimizationTest COMMAND buffer_optimization_test)
+    add_test(NAME MemoryPoolTest COMMAND memory_pool_test)
     
     # TCP 服务器测试目标
     add_test(NAME TcpServerTest COMMAND tcp_server_test)

@@ -183,69 +183,41 @@ int ShardedKVStore::mdel(const std::vector<std::string>& keys) {
 
 size_t ShardedKVStore::size() const {
     size_t total_size = 0;
-    
-    // 获取所有分片的读锁
-    std::vector<std::shared_lock<std::shared_mutex>> locks;
-    locks.reserve(shard_count_);
-    
+
+    // 逐分片短临界区读取，降低整体锁占用时间
     for (size_t i = 0; i < shard_count_; ++i) {
-        locks.emplace_back(shard_locks_[i]);
-    }
-    
-    // 计算总大小
-    for (size_t i = 0; i < shard_count_; ++i) {
+        std::shared_lock<std::shared_mutex> lock(shard_locks_[i]);
         total_size += shards_[i]->size();
     }
-    
+
     return total_size;
 }
 
 std::vector<size_t> ShardedKVStore::shard_sizes() const {
     std::vector<size_t> sizes;
     sizes.reserve(shard_count_);
-    
-    // 获取所有分片的读锁
-    std::vector<std::shared_lock<std::shared_mutex>> locks;
-    locks.reserve(shard_count_);
-    
+
+    // 逐分片短临界区读取，降低整体锁占用时间
     for (size_t i = 0; i < shard_count_; ++i) {
-        locks.emplace_back(shard_locks_[i]);
-    }
-    
-    // 获取每个分片的大小
-    for (size_t i = 0; i < shard_count_; ++i) {
+        std::shared_lock<std::shared_mutex> lock(shard_locks_[i]);
         sizes.push_back(shards_[i]->size());
     }
-    
+
     return sizes;
 }
 
 void ShardedKVStore::clear() {
-    // 获取所有分片的写锁
-    std::vector<std::unique_lock<std::shared_mutex>> locks;
-    locks.reserve(shard_count_);
-    
+    // 逐分片短临界区清理，避免长时间持有全部分片锁
     for (size_t i = 0; i < shard_count_; ++i) {
-        locks.emplace_back(shard_locks_[i]);
-    }
-    
-    // 清空所有分片
-    for (size_t i = 0; i < shard_count_; ++i) {
+        std::unique_lock<std::shared_mutex> lock(shard_locks_[i]);
         shards_[i]->clear();
     }
 }
 
 void ShardedKVStore::cleanup_expired() {
-    // 获取所有分片的写锁
-    std::vector<std::unique_lock<std::shared_mutex>> locks;
-    locks.reserve(shard_count_);
-    
+    // 逐分片短临界区清理，降低并发路径阻塞
     for (size_t i = 0; i < shard_count_; ++i) {
-        locks.emplace_back(shard_locks_[i]);
-    }
-    
-    // 清理所有分片的过期键
-    for (size_t i = 0; i < shard_count_; ++i) {
+        std::unique_lock<std::shared_mutex> lock(shard_locks_[i]);
         shards_[i]->cleanupExpired();
     }
 }
