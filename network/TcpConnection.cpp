@@ -111,24 +111,84 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
     ssize_t nwrote = 0;
     size_t remaining = len;
     bool faultError = false;
-    
+    const char* bytes = static_cast<const char*>(data);
+
     if (state_ == TcpConnectionState::kDisconnected) {
         LOG_WARN("TcpConnection::sendInLoop() 连接已断开，放弃写入");
         return;
     }
-    
-    // 如果输出缓冲区没有数据，尝试直接写入
+
+    // 输出队列已有待发数据时，用 writev 一次尝试写出「旧缓冲 + 本段」，减少一次 append 后再依赖 handleWrite 的路径
+    if (outputBuffer_.readableBytes() > 0 && len > 0) {
+        size_t buf_len = outputBuffer_.readableBytes();
+        struct iovec iov[2];
+        iov[0].iov_base = const_cast<char*>(outputBuffer_.peek());
+        iov[0].iov_len = buf_len;
+        iov[1].iov_base = const_cast<char*>(bytes);
+        iov[1].iov_len = len;
+        ssize_t n = ::writev(socket_->fd(), iov, 2);
+        if (n < 0) {
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+                LOG_ERROR("TcpConnection::sendInLoop() writev 错误: {}", strerror(errno));
+                if (errno == EPIPE || errno == ECONNRESET) {
+                    faultError = true;
+                }
+            }
+            if (!faultError) {
+                outputBuffer_.append(bytes, len);
+                if (!channel_->isWriting()) {
+                    channel_->enableWriting();
+                }
+            }
+            return;
+        }
+        if (n == 0) {
+            outputBuffer_.append(bytes, len);
+            if (!channel_->isWriting()) {
+                channel_->enableWriting();
+            }
+            return;
+        }
+
+        size_t nu = static_cast<size_t>(n);
+        if (nu <= buf_len) {
+            outputBuffer_.retrieve(nu);
+            outputBuffer_.append(bytes, len);
+        } else {
+            outputBuffer_.retrieve(buf_len);
+            size_t sent_new = nu - buf_len;
+            if (sent_new < len) {
+                outputBuffer_.append(bytes + sent_new, len - sent_new);
+            }
+        }
+
+        if (outputBuffer_.readableBytes() == 0) {
+            channel_->disableWriting();
+            if (writeCompleteCallback_) {
+                loop_->queueInLoop(
+                    std::bind(writeCompleteCallback_, shared_from_this()));
+            }
+            if (state_ == TcpConnectionState::kDisconnecting) {
+                shutdownInLoop();
+            }
+        } else if (!channel_->isWriting()) {
+            channel_->enableWriting();
+        }
+        return;
+    }
+
+    // 输出缓冲区为空：尽量一次 write 直接进内核
     if (!channel_->isWriting() && outputBuffer_.readableBytes() == 0) {
-        nwrote = ::write(socket_->fd(), data, remaining);
+        nwrote = ::write(socket_->fd(), bytes, remaining);
         if (nwrote >= 0) {
-            remaining -= nwrote;
+            remaining -= static_cast<size_t>(nwrote);
             if (remaining == 0 && writeCompleteCallback_) {
                 loop_->queueInLoop(
                     std::bind(writeCompleteCallback_, shared_from_this()));
             }
         } else {
             nwrote = 0;
-            if (errno != EWOULDBLOCK) {
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
                 LOG_ERROR("TcpConnection::sendInLoop() 写入错误: {}", strerror(errno));
                 if (errno == EPIPE || errno == ECONNRESET) {
                     faultError = true;
@@ -136,12 +196,10 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
             }
         }
     }
-    
-    // 如果还有数据未发送，放入输出缓冲区
+
     if (!faultError && remaining > 0) {
-        // append 方法会自动处理空间不足的情况
-        outputBuffer_.append(static_cast<const char*>(data) + nwrote, remaining);
-        
+        outputBuffer_.append(bytes + static_cast<size_t>(nwrote), remaining);
+
         if (!channel_->isWriting()) {
             channel_->enableWriting();
         }
