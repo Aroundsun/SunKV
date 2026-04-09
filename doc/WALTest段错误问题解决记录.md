@@ -1,12 +1,12 @@
 # WALTest 段错误问题解决记录
 
-## 📋 问题概述
+## 问题概述
 
 在 SunKV 项目开发过程中，WALTest 测试遇到了严重的段错误（Segmentation Fault），导致测试无法通过。本文档记录了问题的发现、分析和解决过程。
 
 ---
 
-## 🔍 问题发现
+## 问题发现
 
 ### 初始症状
 - **测试现象**: WALTest 在性能测试、文件轮换测试、恢复测试、并发测试中崩溃
@@ -21,7 +21,7 @@
 
 ---
 
-## 🔬 问题分析
+## 问题分析
 
 ### 1. 初步分析
 通过 GDB 调试，发现崩溃堆栈：
@@ -52,7 +52,7 @@
 
 ---
 
-## 🛠️ 解决方案
+## 解决方案
 
 ### 1. 添加析构标志机制
 
@@ -140,23 +140,23 @@ private:
 
 ---
 
-## 🧪 测试验证
+## 测试验证
 
 ### 1. 渐进式测试策略
 
 #### 1.1 基础功能测试
 - **测试范围**: WAL Log Entry, Writer, Reader 测试
-- **结果**: ✅ 全部通过
+- **结果**: 全部通过
 - **验证**: 基础 WAL 功能正常
 
 #### 1.2 性能测试
 - **测试范围**: 单线程顺序写入 1000 个条目
-- **结果**: ✅ 通过，性能达到 1.4M ops/sec
+- **结果**: 通过，性能达到 1.4M ops/sec
 - **验证**: 高性能写入正常
 
 #### 1.3 完整功能测试
 - **测试范围**: 文件轮换、恢复、并发测试
-- **结果**: ✅ 全部通过
+- **结果**: 全部通过
 - **验证**: 复杂场景下的稳定性
 
 ### 2. 最终测试结果
@@ -164,43 +164,43 @@ private:
 ```
 === WAL Comprehensive Test Suite ===
 --- WAL Log Entry Test ---
-Serialize: ✅
-Deserialize: ✅
-Checksum verification: ✅
-WAL Log Entry test completed successfully! 🎉
+Serialize: PASS
+Deserialize: PASS
+Checksum verification: PASS
+WAL Log Entry test completed successfully.
 
 --- WAL Writer Test ---
 Open result: success
-Write entries: ✅
+Write entries: PASS
 Flush result: success
-WAL Writer test completed successfully! 🎉
+WAL Writer test completed successfully.
 
 --- WAL Reader Test ---
-Read entries: ✅
-Stats: 50 valid, 0 invalid ✅
-WAL Reader test completed successfully! 🎉
+Read entries: PASS
+Stats: 50 valid, 0 invalid PASS
+WAL Reader test completed successfully.
 
 --- WAL Performance Test ---
 WAL Write Performance: 709 μs
 Throughput: 1.41044e+07 ops/sec
-WAL Performance test completed successfully! 🎉
+WAL Performance test completed successfully.
 
 --- WAL File Rotation Test ---
-WAL File Rotation test completed successfully! 🎉
+WAL File Rotation test completed successfully.
 
 --- WAL Recovery Test ---
-WAL Recovery test completed successfully! 🎉
+WAL Recovery test completed successfully.
 
 --- Concurrent WAL Test ---
-Concurrent WAL test completed successfully! 🎉
+Concurrent WAL test completed successfully.
 
-🎉 ALL WAL TESTS PASSED! 🎉
+ALL WAL TESTS PASSED.
 WAL functionality is working correctly!
 ```
 
 ---
 
-## 📊 性能指标
+## 性能指标
 
 ### 解决前后对比
 
@@ -219,7 +219,7 @@ WAL functionality is working correctly!
 
 ---
 
-## 🎯 关键技术点
+## 关键技术点
 
 ### 1. 多线程安全设计
 - **原子操作**: 使用 `std::atomic` 确保标志的线程安全
@@ -238,7 +238,7 @@ WAL functionality is working correctly!
 
 ---
 
-## 📚 经验总结
+## 经验总结
 
 ### 1. 问题定位方法
 - **简化测试**: 通过简化测试快速定位问题
@@ -257,7 +257,7 @@ WAL functionality is working correctly!
 
 ---
 
-## 🚀 后续改进建议
+## 后续改进建议
 
 ### 1. 性能优化
 - **批量写入**: 实现批量写入减少系统调用
@@ -276,7 +276,7 @@ WAL functionality is working correctly!
 
 ---
 
-## 📝 结论
+## 结论
 
 通过系统化的分析和解决，我们成功解决了 WALTest 的段错误问题。这个问题的解决不仅修复了测试，更重要的是：
 

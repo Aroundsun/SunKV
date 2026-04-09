@@ -1,79 +1,78 @@
 # SunKV
 
-一个高性能的 KV 存储系统，基于 C++17 实现。
+基于 C++17 的高性能 KV 存储系统，兼容 RESP 协议，采用多线程 Reactor 架构，支持 WAL + Snapshot 持久化恢复。
 
-## 项目特性
+## 当前状态
 
-- **高性能**: 基于多线程 Reactor 架构，支持高并发
-- **RESP 协议**: 兼容 Redis 协议
-- **持久化**: 支持 WAL + Snapshot 数据恢复
-- **Pipeline**: 支持命令管道处理
-- **LRU 淘汰**: 内存管理策略
+- 阶段进度：已完成 `8.1 功能测试`、`8.2 性能优化阶段`、`8.3 稳定性测试`
+- 8.2 结果：性能较基线显著提升，当前主要区间约 `SET 24k~25k` / `GET 30k~31k`
+- 8.3 结果：1 小时长跑、内存趋势、崩溃恢复（snapshot 模式）、压力测试均通过
 
-## 性能目标
+说明：性能目标 `QPS >= 50,000` 尚未完全达成，后续将继续微优化高频路径。
 
-- QPS ≥ 50,000（单机）
-- 支持 ≥ 1,000,000 keys
-- 平均延迟 < 1ms（本地测试）
-- 支持 ≥ 1000 并发连接
+## 主要特性
 
-## 构建要求
+- 高并发网络模型：多线程 Reactor（`epoll`）
+- RESP 协议支持：含 pipeline 场景
+- 存储与持久化：多类型内存存储 + WAL + Snapshot
+- 可观测能力：统计/调试命令与阶段性性能记录
+- 测试脚本：功能、性能、稳定性测试脚本持续完善
 
-- CMake ≥ 3.10
-- GCC ≥ 7.0 或 Clang ≥ 5.0 (支持 C++17)
-- Linux 系统
+## 构建与运行
 
-## 构建步骤
+### 依赖要求
+
+- Linux
+- CMake >= 3.10
+- GCC/Clang（支持 C++17）
+
+### 编译
 
 ```bash
-# 克隆项目
-git clone <repository-url>
 cd SunKV
-
-# 创建构建目录
-mkdir build && cd build
-
-# 配置项目
+mkdir -p build
+cd build
 cmake ..
-
-# 编译
-make -j$(nproc)
-
-# 运行
-./sunkv
+cmake --build . -j$(nproc)
 ```
 
-## 项目结构
+### 启动
 
+```bash
+./build/sunkv --port 6379
 ```
+
+可选参数（示例）：
+
+```bash
+./build/sunkv --port 6379 --thread-pool-size 4 --max-connections 2000
+```
+
+## 测试入口
+
+- 功能测试（8.1）：`test/functional_suite_stage8_1.sh`（历史脚本）
+- 性能与 profiling（8.2）：`test/stage8_2_root_profile.sh`
+- 稳定性测试（8.3）：`test/stage8_3_stability_suite.sh`
+
+## 文档索引
+
+- 总体计划：`doc/开发计划.md`
+- 架构设计：`doc/设计文档.md`
+- 接口说明：`doc/API文档.md`
+- 7.2 优化详记：`doc/7.2性能优化详细记录.md`
+- 8.2 过程记录：`doc/8.2性能测试记录.md`
+- 8.2 总览版：`doc/8.2性能优化总览.md`
+- 8.3 稳定性记录：`doc/8.3稳定性测试记录.md`
+
+## 项目目录（简版）
+
+```text
 SunKV/
-├── CMakeLists.txt          # 主构建文件
-├── README.md               # 项目说明
-├── doc/                    # 文档目录
-│   ├── 设计文档.md
-│   └── 开发计划.md
-├── network/                # 网络层
-│   ├── EventLoop.h/cpp     # 事件循环
-│   ├── Channel.h/cpp       # 事件通道
-│   ├── Poller.h/cpp        # epoll 封装
-│   └── logger.h/cpp        # 日志系统
-├── protocol/               # 协议层
-├── storage/                # 存储引擎
-├── persistence/            # 持久化层
-├── server/                 # 服务器主程序
-│   └── main.cpp
-└── test/                   # 测试代码
+├── server/      # 服务端主流程
+├── network/     # 网络与事件循环
+├── protocol/    # RESP 解析/序列化
+├── storage/     # 存储引擎与数据结构
+├── common/      # 通用模块（配置、数据结构、内存池等）
+├── test/        # 测试与阶段脚本
+└── doc/         # 阶段记录与设计文档
 ```
-
-## 开发进度
-
-当前处于第一阶段：基础框架搭建
-
-- [x] 项目结构初始化
-- [x] 配置 CMake 构建系统
-- [ ] 网络层基础组件
-- [x] 日志系统（基于 spdlog）
-
-## 联系方式
-
-如有问题，请提交 Issue 或联系开发者。

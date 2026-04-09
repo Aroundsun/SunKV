@@ -1,4 +1,4 @@
-# Bug Fix: Buffer Type Casting Issue
+# Buffer 类型转换问题修复记录
 
 ## 问题描述
 
@@ -47,10 +47,10 @@ std::string message = buffer->retrieveAsString(len);
 ## 测试结果
 
 修复后：
-- ✅ 服务器正确接收 RESP 命令
-- ✅ PING 命令返回 `+PONG`
-- ✅ 十六进制数据正确：`2a 31 d a 24 34 d a 50 49 4e 47 d a`
-- ✅ 客户端-服务器通信正常
+- 服务器正确接收 RESP 命令
+- PING 命令返回 `+PONG`
+- 十六进制数据正确：`2a 31 d a 24 34 d a 50 49 4e 47 d a`
+- 客户端与服务器通信恢复正常
 
 ## 经验教训
 

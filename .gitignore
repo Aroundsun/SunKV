@@ -34,6 +34,7 @@ test_results/
 # Temporary files
 *.tmp
 *.temp
+tmp/
 
 # CMake files
 CMakeCache.txt
@@ -48,3 +49,10 @@ config.json
 
 # Runtime data
 data/snapshot/*.snap
+data/logs/
+
+# Local drafts / archived docs
+docs/
+
+# Local benchmark artifacts (keep metrics in markdown docs)
+doc/bench_*_quantify.txt
