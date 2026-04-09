@@ -460,8 +460,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         
         // 如果 RESP 解析失败，尝试简单的字符串匹配 (备用方案)
         if (message.find("PING") != std::string::npos) {
-            auto pong = RESPSerializer::serializeSimpleString("PONG");
-            conn->send(pong.data(), pong.size());
+            conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
             return;
         }
     } catch (const std::exception& e) {
@@ -496,11 +495,10 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                 auto& cmd_array = array_value->getValues();
                 if (cmd_array[0] && cmd_array[0]->getType() == RESPType::BULK_STRING) {
                     auto* bulk_string = static_cast<RESPBulkString*>(cmd_array[0].get());
-                    std::string cmd_name = bulk_string->getValue();
+                    const std::string& cmd_name = bulk_string->getValue();
                     
                     if (cmd_name == "PING") {
-                        auto pong = RESPSerializer::serializeSimpleString("PONG");
-                        conn->send(pong.data(), pong.size());
+                        conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
                         return;
                     }
 
@@ -522,8 +520,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                                 wal_manager_->write_set(key, value);
                             }
 
-                            auto ok = RESPSerializer::serializeSimpleString("OK");
-                            conn->send(ok.data(), ok.size());
+                            conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
                             return;
                         }
                     }
@@ -536,8 +533,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::STRING || it->second.isExpired()) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
 
@@ -616,8 +612,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
 
                         if (subcmd == "RESETSTATS") {
                             ThreadLocalBufferPool::instance().resetStats();
-                            auto ok = RESPSerializer::serializeSimpleString("OK");
-                            conn->send(ok.data(), ok.size());
+                            conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
                             return;
                         }
 
@@ -629,8 +624,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "HEALTH") {
                         bool healthy = running_.load() && !stopping_.load();
                         if (healthy) {
-                            auto ok = RESPSerializer::serializeSimpleString("OK");
-                            conn->send(ok.data(), ok.size());
+                            conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
                         } else {
                             auto err = RESPSerializer::serializeError("UNHEALTHY");
                             conn->send(err.data(), err.size());
@@ -640,8 +634,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     
                     if (cmd_name == "SNAPSHOT") {
                         if (create_multi_type_snapshot()) {
-                            auto ok = RESPSerializer::serializeSimpleString("OK");
-                            conn->send(ok.data(), ok.size());
+                            conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
                         } else {
                             auto error = RESPSerializer::serializeError("Snapshot creation failed");
                             conn->send(error.data(), error.size());
@@ -686,8 +679,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             multi_storage_.clear();
                         }
-                        auto ok = RESPSerializer::serializeSimpleString("OK");
-                        conn->send(ok.data(), ok.size());
+                        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
                         return;
                     }
                     
@@ -764,14 +756,12 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
                             if (it->second.list_value.empty()) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
@@ -792,14 +782,12 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
                             if (it->second.list_value.empty()) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
@@ -1010,15 +998,13 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::lock_guard<std::mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
                             auto field_it = it->second.hash_value.find(field);
                             if (field_it == it->second.hash_value.end()) {
-                                auto nil = RESPSerializer::serializeNullBulkString();
-                                conn->send(nil.data(), nil.size());
+                                conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
                                 return;
                             }
                             
@@ -1233,8 +1219,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                 std::string cmd = simple_string->toString();
                 
                 if (cmd == "PING") {
-                    auto pong = RESPSerializer::serializeSimpleString("PONG");
-                    conn->send(pong.data(), pong.size());
+                    conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
                     return;
                 }
             }

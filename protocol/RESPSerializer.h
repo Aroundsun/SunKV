@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 #include "RESPType.h"
@@ -12,6 +13,11 @@
  */
 class RESPSerializer {
 public:
+    /// 热点固定 RESP 片段（与 serializeSimpleString / serializeNullBulkString 结果一致），可直接 send 避免堆分配
+    static constexpr std::string_view kSimpleStringOk{"+OK\r\n"};
+    static constexpr std::string_view kSimpleStringPong{"+PONG\r\n"};
+    static constexpr std::string_view kNullBulkString{"$-1\r\n"};
+
     /**
      * @brief 序列化 RESPValue
      * @param value 要序列化的值
