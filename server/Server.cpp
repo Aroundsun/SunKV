@@ -299,12 +299,12 @@ bool Server::initializePersistence() {
         if (snapshot_loaded) {
             // 快照恢复成功，跳过 WAL 恢复避免重复操作
             // 直接使用快照数据
-            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
             multi_storage_ = multi_data;
         } else {
             // 没有快照，进行 WAL 恢复
             if (wal_manager_->replay_multi_type(multi_data)) {
-                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                 multi_storage_ = multi_data;
             } else {
             }
@@ -342,7 +342,7 @@ bool Server::load_multi_type_snapshot(std::map<std::string, DataValue>& data) {
 
 bool Server::create_multi_type_snapshot() {
     try {
-        std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+        std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
         if (snapshot_manager_) {
             bool success = snapshot_manager_->create_multi_type_snapshot(multi_storage_);
             if (success) {
@@ -421,46 +421,49 @@ void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
 }
 
 void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
-    total_commands_.fetch_add(1);
-    total_operations_.fetch_add(1);
-    profile_message_count_.fetch_add(1);
-    
     try {
         // 正确转换 Buffer 到字符串
         Buffer* buffer = static_cast<Buffer*>(data);
         std::string message = buffer->retrieveAsString(len);
         LOG_DEBUG("收到来自 {} 的消息: {}", conn->peerAddress(), message);
-        
-        // 解析 RESP 命令
-        
-        // 使用真正的 RESP 解析器
-        auto parse_begin = std::chrono::steady_clock::now();
-        RESPParser parser;
-        auto result = parser.parse(message);
-        auto parse_end = std::chrono::steady_clock::now();
-        profile_parse_ns_.fetch_add(
-            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(parse_end - parse_begin).count()));
-        
-        
-        if (result.success && result.complete && result.value) {
-            auto process_begin = std::chrono::steady_clock::now();
-            processCommand(conn, result.value);
-            auto process_end = std::chrono::steady_clock::now();
-            profile_process_ns_.fetch_add(
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(process_end - process_begin).count()));
-            return;
-        } else if (!result.complete) {
-            return; // 等待更多数据
-        } else {
-            // 发送错误响应
+
+        // 一次 read 里可能带多条 RESP 命令，循环解析并执行，减少函数调度和网络往返开销。
+        size_t offset = 0;
+        while (offset < message.size()) {
+            RESPParser parser;
+            auto parse_begin = std::chrono::steady_clock::now();
+            auto result = parser.parse(message.substr(offset));
+            auto parse_end = std::chrono::steady_clock::now();
+            profile_parse_ns_.fetch_add(
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(parse_end - parse_begin).count()));
+
+            if (result.success && result.complete && result.value) {
+                auto process_begin = std::chrono::steady_clock::now();
+                processCommand(conn, result.value);
+                auto process_end = std::chrono::steady_clock::now();
+                profile_process_ns_.fetch_add(
+                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(process_end - process_begin).count()));
+
+                total_commands_.fetch_add(1);
+                total_operations_.fetch_add(1);
+                profile_message_count_.fetch_add(1);
+
+                if (result.processed_bytes == 0) {
+                    // 防御：避免异常解析器返回导致死循环
+                    break;
+                }
+                offset += result.processed_bytes;
+                continue;
+            }
+
+            if (!result.complete) {
+                // 数据不足，等待下一次网络读取。
+                break;
+            }
+
+            // RESP 解析错误
             auto error_resp = RESPSerializer::serializeError("Invalid RESP format: " + result.error);
             conn->send(error_resp.data(), error_resp.size());
-            return;
-        }
-        
-        // 如果 RESP 解析失败，尝试简单的字符串匹配 (备用方案)
-        if (message.find("PING") != std::string::npos) {
-            conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
             return;
         }
     } catch (const std::exception& e) {
@@ -512,7 +515,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::string value = value_bulk->getValue();
 
                             {
-                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                                std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                                 multi_storage_[key] = DataValue(value);
                             }
 
@@ -530,7 +533,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
 
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::shared_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::STRING || it->second.isExpired()) {
                                 conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
@@ -546,7 +549,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "DEL" && cmd_array.size() >= 2) {
                         int deleted_count = 0;
                         {
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             for (size_t i = 1; i < cmd_array.size(); ++i) {
                                 if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
                                     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
@@ -570,12 +573,13 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "EXISTS" && cmd_array.size() >= 2) {
                         int exists_count = 0;
                         {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
+                            std::shared_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             for (size_t i = 1; i < cmd_array.size(); ++i) {
                                 if (cmd_array[i] && cmd_array[i]->getType() == RESPType::BULK_STRING) {
                                     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[i].get());
                                     std::string key = key_bulk->getValue();
-                                    if (simple_storage_.find(key) != simple_storage_.end()) {
+                                    auto it = multi_storage_.find(key);
+                                    if (it != multi_storage_.end() && !it->second.isExpired()) {
                                         exists_count++;
                                     }
                                 }
@@ -646,9 +650,11 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                         std::string keys_array = "*";
                         std::vector<std::string> keys;
                         {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                            for (const auto& pair : simple_storage_) {
-                                keys.push_back(pair.first);
+                            std::shared_lock<std::shared_mutex> lock(multi_storage_mutex_);
+                            for (const auto& pair : multi_storage_) {
+                                if (!pair.second.isExpired()) {
+                                    keys.push_back(pair.first);
+                                }
                             }
                         }
                         keys_array += std::to_string(keys.size()) + "\r\n";
@@ -662,8 +668,12 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     if (cmd_name == "DBSIZE") {
                         int64_t size = 0;
                         {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                            size = simple_storage_.size();
+                            std::shared_lock<std::shared_mutex> lock(multi_storage_mutex_);
+                            for (const auto& pair : multi_storage_) {
+                                if (!pair.second.isExpired()) {
+                                    ++size;
+                                }
+                            }
                         }
                         auto response = RESPSerializer::serializeInteger(size);
                         conn->send(response.data(), response.size());
@@ -672,11 +682,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     
                     if (cmd_name == "FLUSHALL") {
                         {
-                            std::lock_guard<std::mutex> lock(simple_storage_mutex_);
-                            simple_storage_.clear();
-                        }
-                        {
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             multi_storage_.clear();
                         }
                         conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
@@ -689,7 +695,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto& data = multi_storage_[key];
                             if (data.type != DataType::LIST && data.type != DataType::STRING) {
                                 auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
@@ -721,7 +727,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto& data = multi_storage_[key];
                             if (data.type != DataType::LIST && data.type != DataType::STRING) {
                                 auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
@@ -753,7 +759,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
                                 conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
@@ -779,7 +785,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::LIST) {
                                 conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
@@ -805,7 +811,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::LIST || it->second.isExpired()) {
                                 if (it != multi_storage_.end() && it->second.isExpired()) {
@@ -829,7 +835,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto& data = multi_storage_[key];
                             if (data.type != DataType::SET && data.type != DataType::STRING) {
                                 auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
@@ -864,7 +870,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::SET) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -893,7 +899,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::SET) {
                                 std::string empty_array = "*0\r\n";
@@ -915,7 +921,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::SET) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -937,7 +943,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::string key = key_bulk->getValue();
                             std::string member = member_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::SET) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -964,7 +970,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::string field = field_bulk->getValue();
                             std::string value = value_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto& data = multi_storage_[key];
                             if (data.type != DataType::HASH && data.type != DataType::STRING) {
                                 auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
@@ -995,7 +1001,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::string key = key_bulk->getValue();
                             std::string field = field_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
                                 conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
@@ -1019,7 +1025,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -1048,7 +1054,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
                                 std::string empty_array = "*0\r\n";
@@ -1071,7 +1077,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -1093,7 +1099,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             std::string key = key_bulk->getValue();
                             std::string field = field_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end() || it->second.type != DataType::HASH) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -1119,7 +1125,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             try {
                                 int64_t ttl_seconds = std::stoll(ttl_bulk->getValue());
                                 
-                                std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                                std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                                 auto it = multi_storage_.find(key);
                                 if (it == multi_storage_.end()) {
                                     auto response = RESPSerializer::serializeInteger(0);
@@ -1144,7 +1150,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end()) {
                                 auto response = RESPSerializer::serializeInteger(-2);  // key 不存在
@@ -1164,7 +1170,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end()) {
                                 auto response = RESPSerializer::serializeInteger(-2);  // key 不存在
@@ -1193,7 +1199,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
                             std::string key = key_bulk->getValue();
                             
-                            std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+                            std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
                             auto it = multi_storage_.find(key);
                             if (it == multi_storage_.end()) {
                                 auto response = RESPSerializer::serializeInteger(0);
@@ -1275,7 +1281,7 @@ void Server::ttlCleanupThread() {
 }
 
 void Server::cleanupExpiredKeys() {
-    std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+    std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
     
     
     auto it = multi_storage_.begin();
@@ -1294,7 +1300,7 @@ std::string Server::buildStatsReport() {
     auto stats = getStats();
     size_t kv_size = 0;
     {
-        std::lock_guard<std::mutex> lock(multi_storage_mutex_);
+        std::unique_lock<std::shared_mutex> lock(multi_storage_mutex_);
         kv_size = multi_storage_.size();
     }
 

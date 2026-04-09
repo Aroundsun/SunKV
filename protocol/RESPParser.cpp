@@ -18,7 +18,7 @@ void RESPParser::reset() {
     array_stack_.clear();
 }
 
-ParseResult RESPParser::parse(const std::string& data) {
+ParseResult RESPParser::parse(std::string_view data) {
     if (data.empty()) {
         return ParseResult::makeIncomplete(0);
     }
@@ -89,13 +89,13 @@ ParseResult RESPParser::parse(const std::string& data) {
     return ParseResult::makeIncomplete(pos);
 }
 
-ParseResult RESPParser::parseSimpleString(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseSimpleString(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
         return ParseResult::makeIncomplete(pos);
     }
     
-    std::string value = data.substr(pos, crlf_pos - pos);
+    std::string value{data.substr(pos, crlf_pos - pos)};
     current_value_ = makeSimpleString(value);
     
     size_t total_processed = crlf_pos + 2 - pos;
@@ -123,13 +123,13 @@ ParseResult RESPParser::parseSimpleString(const std::string& data, size_t& pos) 
     return ParseResult::makeSuccess(current_value_, pos);
 }
 
-ParseResult RESPParser::parseError(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseError(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
         return ParseResult::makeIncomplete(pos);
     }
     
-    std::string message = data.substr(pos, crlf_pos - pos);
+    std::string message{data.substr(pos, crlf_pos - pos)};
     current_value_ = makeError(message);
     
     size_t total_processed = crlf_pos + 2 - pos;
@@ -157,7 +157,7 @@ ParseResult RESPParser::parseError(const std::string& data, size_t& pos) {
     return ParseResult::makeSuccess(current_value_, pos);
 }
 
-ParseResult RESPParser::parseInteger(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseInteger(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
         return ParseResult::makeIncomplete(pos);
@@ -195,7 +195,7 @@ ParseResult RESPParser::parseInteger(const std::string& data, size_t& pos) {
     return ParseResult::makeSuccess(current_value_, pos);
 }
 
-ParseResult RESPParser::parseBulkStringSize(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseBulkStringSize(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
         return ParseResult::makeIncomplete(pos);
@@ -242,7 +242,7 @@ ParseResult RESPParser::parseBulkStringSize(const std::string& data, size_t& pos
     }
 }
 
-ParseResult RESPParser::parseBulkStringData(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseBulkStringData(std::string_view data, size_t& pos) {
     size_t remaining = bulk_size_ - temp_data_.length();
     size_t available = data.length() - pos;
     
@@ -294,7 +294,7 @@ ParseResult RESPParser::parseBulkStringData(const std::string& data, size_t& pos
     }
 }
 
-ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseArraySize(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
         return ParseResult::makeIncomplete(pos);
@@ -368,18 +368,18 @@ ParseResult RESPParser::parseArraySize(const std::string& data, size_t& pos) {
     }
 }
 
-ParseResult RESPParser::parseArrayElement(const std::string& data, size_t& pos) {
+ParseResult RESPParser::parseArrayElement(std::string_view data, size_t& pos) {
     // 这个状态实际上不会直接使用，而是通过 START 状态来处理
     state_ = ParseState::START;
     return parse(data.substr(pos));
 }
 
-bool RESPParser::findCRLF(const std::string& data, size_t pos, size_t& crlf_pos) {
+bool RESPParser::findCRLF(std::string_view data, size_t pos, size_t& crlf_pos) {
     crlf_pos = data.find("\r\n", pos);
     return crlf_pos != std::string::npos;
 }
 
-int64_t RESPParser::parseInteger(const std::string& data, size_t start, size_t end) {
+int64_t RESPParser::parseInteger(std::string_view data, size_t start, size_t end) {
     if (start >= end) {
         return LLONG_MAX;
     }

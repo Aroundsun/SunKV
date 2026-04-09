@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 #include <mutex>
+#include <shared_mutex>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -205,14 +206,10 @@ private:
     
     // 多类型内存存储
     std::map<std::string, DataValue> multi_storage_;
-    std::mutex multi_storage_mutex_;
+    std::shared_mutex multi_storage_mutex_;
     
     // 快照时间戳（用于 WAL 过滤）
     uint64_t snapshot_timestamp_{0};
-    
-    // 简单内存存储 (临时实现，向后兼容)
-    std::map<std::string, std::string> simple_storage_;
-    std::mutex simple_storage_mutex_;
     
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态

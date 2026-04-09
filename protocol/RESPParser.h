@@ -2,6 +2,7 @@
 
 #include "RESPType.h"
 #include <string>
+#include <string_view>
 #include <memory>
 
 // RESP 解析状态
@@ -44,7 +45,7 @@ public:
     ~RESPParser() = default;
     
     // 解析数据
-    ParseResult parse(const std::string& data);
+    ParseResult parse(std::string_view data);
     
     // 重置解析器状态
     void reset();
@@ -60,17 +61,17 @@ public:
 
 private:
     // 解析不同类型的方法
-    ParseResult parseSimpleString(const std::string& data, size_t& pos);
-    ParseResult parseError(const std::string& data, size_t& pos);
-    ParseResult parseInteger(const std::string& data, size_t& pos);
-    ParseResult parseBulkStringSize(const std::string& data, size_t& pos);
-    ParseResult parseBulkStringData(const std::string& data, size_t& pos);
-    ParseResult parseArraySize(const std::string& data, size_t& pos);
-    ParseResult parseArrayElement(const std::string& data, size_t& pos);
+    ParseResult parseSimpleString(std::string_view data, size_t& pos);
+    ParseResult parseError(std::string_view data, size_t& pos);
+    ParseResult parseInteger(std::string_view data, size_t& pos);
+    ParseResult parseBulkStringSize(std::string_view data, size_t& pos);
+    ParseResult parseBulkStringData(std::string_view data, size_t& pos);
+    ParseResult parseArraySize(std::string_view data, size_t& pos);
+    ParseResult parseArrayElement(std::string_view data, size_t& pos);
     
     // 辅助方法
-    bool findCRLF(const std::string& data, size_t pos, size_t& crlf_pos);
-    int64_t parseInteger(const std::string& data, size_t start, size_t end);
+    bool findCRLF(std::string_view data, size_t pos, size_t& crlf_pos);
+    int64_t parseInteger(std::string_view data, size_t start, size_t end);
     
     // 数组栈管理
     struct ArrayContext {
