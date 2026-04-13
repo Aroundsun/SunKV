@@ -96,7 +96,10 @@ int main(int argc, char* argv[]) {
         // 加载默认配置
         std::string default_config = "./sunkv.conf";
         if (std::filesystem::exists(default_config)) {
-            config.loadFromFile(default_config);
+            if (!config.loadFromFile(default_config)) {
+                std::cerr << "加载默认配置失败: " << default_config << std::endl;
+                return 1;
+            }
         }
         
         // 加载命令行参数（会覆盖配置文件中的设置）
@@ -111,6 +114,9 @@ int main(int argc, char* argv[]) {
         
         // 设置日志级别
         Logger::instance().setLevelFromName(config.log_level);
+
+        // 是否输出到控制台（文件 + 控制台双 sink）
+        Logger::instance().setConsoleEnabled(config.enable_console_log);
         
         // 如果指定了日志文件，设置日志输出
         if (!config.log_file.empty()) {

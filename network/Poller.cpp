@@ -29,7 +29,12 @@ Poller::~Poller() {
 }
 
 int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
-    LOG_DEBUG("Poller::poll() 等待事件，timeout={}ms", timeoutMs);
+    // Debug 下该日志非常高频：按固定频率采样，避免日志 I/O 扭曲性能
+    ++poll_calls_;
+    const uint64_t sample_every = 1000;
+    if ((poll_calls_ % sample_every) == 1) {
+        LOG_DEBUG("Poller::poll() 等待事件，timeout={}ms (sampled: 1/{} polls)", timeoutMs, sample_every);
+    }
     
     int numEvents = ::epoll_wait(epollFd_, 
                                 events_.data(), 
@@ -47,7 +52,9 @@ int Poller::poll(int timeoutMs, ChannelList* activeChannels) {
             events_.resize(events_.size() * 2);
         }
     } else if (numEvents == 0) {
-        LOG_DEBUG("Poller::poll() 超时，没有事件");
+        if ((poll_calls_ % sample_every) == 1) {
+            LOG_DEBUG("Poller::poll() 超时，没有事件 (sampled)");
+        }
     } else {
         // 不是被信号中断的错误
         if (savedErrno != EINTR) {

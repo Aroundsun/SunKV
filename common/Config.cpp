@@ -96,6 +96,12 @@ void Config::loadFromArgs(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         
+        auto parseBoolArg = [&](const char* v) -> bool {
+            std::string s(v ? v : "");
+            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+            return (s == "true" || s == "1" || s == "yes" || s == "on");
+        };
+
         if (arg == "--port" && i + 1 < argc) {
             port = std::stoi(argv[++i]);
         } else if (arg == "--host" && i + 1 < argc) {
@@ -106,17 +112,45 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             max_connections = std::stoi(argv[++i]);
         } else if (arg == "--data-dir" && i + 1 < argc) {
             data_dir = argv[++i];
+        } else if (arg == "--wal-dir" && i + 1 < argc) {
+            wal_dir = argv[++i];
+        } else if (arg == "--snapshot-dir" && i + 1 < argc) {
+            snapshot_dir = argv[++i];
+        } else if (arg == "--max-memory-mb" && i + 1 < argc) {
+            max_memory_mb = std::stoi(argv[++i]);
         } else if (arg == "--config" && i + 1 < argc) {
             loadFromFile(argv[++i]);
         } else if (arg == "--log-level" && i + 1 < argc) {
             log_level = argv[++i];
             log_level_from_cli = true;
+        } else if (arg == "--log-file" && i + 1 < argc) {
+            log_file = argv[++i];
+        } else if (arg == "--enable-console-log" && i + 1 < argc) {
+            enable_console_log = parseBoolArg(argv[++i]);
         } else if (arg == "--enable-periodic-stats-log" && i + 1 < argc) {
-            std::string v = argv[++i];
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            enable_periodic_stats_log = (v == "true" || v == "1" || v == "yes" || v == "on");
+            enable_periodic_stats_log = parseBoolArg(argv[++i]);
         } else if (arg == "--stats-log-interval" && i + 1 < argc) {
             stats_log_interval_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--enable-wal" && i + 1 < argc) {
+            enable_wal = parseBoolArg(argv[++i]);
+        } else if (arg == "--enable-snapshot" && i + 1 < argc) {
+            enable_snapshot = parseBoolArg(argv[++i]);
+        } else if (arg == "--snapshot-interval-seconds" && i + 1 < argc) {
+            snapshot_interval_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--wal-sync-interval-ms" && i + 1 < argc) {
+            wal_sync_interval_ms = std::stoi(argv[++i]);
+        } else if (arg == "--max-wal-file-size-mb" && i + 1 < argc) {
+            max_wal_file_size_mb = std::stoi(argv[++i]);
+        } else if (arg == "--ttl-cleanup-interval-seconds" && i + 1 < argc) {
+            ttl_cleanup_interval_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--max-ttl-seconds" && i + 1 < argc) {
+            max_ttl_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--tcp-keepalive-seconds" && i + 1 < argc) {
+            tcp_keepalive_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--tcp-send-buffer-size" && i + 1 < argc) {
+            tcp_send_buffer_size = std::stoi(argv[++i]);
+        } else if (arg == "--tcp-recv-buffer-size" && i + 1 < argc) {
+            tcp_recv_buffer_size = std::stoi(argv[++i]);
         } else if (arg == "--help") {
             printUsage();
             exit(0);
@@ -293,9 +327,24 @@ void Config::printUsage() const {
     std::cout << "  --thread-pool-size <n>  Worker thread count (default: 4)" << std::endl;
     std::cout << "  --max-connections <n>   Max client connections (default: 1000)" << std::endl;
     std::cout << "  --data-dir <dir>        Data directory (default: ./data)" << std::endl;
+    std::cout << "  --wal-dir <dir>         WAL directory (default: ./data/wal)" << std::endl;
+    std::cout << "  --snapshot-dir <dir>    Snapshot directory (default: ./data/snapshot)" << std::endl;
+    std::cout << "  --max-memory-mb <n>     Max memory MB (default: 1024)" << std::endl;
     std::cout << "  --config <file>         Configuration file" << std::endl;
     std::cout << "  --log-level <LEVEL>     DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)" << std::endl;
+    std::cout << "  --log-file <path>       Log file path template (default: ./data/logs/sunkv.log)" << std::endl;
+    std::cout << "  --enable-console-log <bool>         Enable console log (default: true)" << std::endl;
     std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;
     std::cout << "  --stats-log-interval <sec>          Stats log interval seconds" << std::endl;
+    std::cout << "  --enable-wal <bool>                 Enable WAL (default: true)" << std::endl;
+    std::cout << "  --enable-snapshot <bool>            Enable snapshot (default: true)" << std::endl;
+    std::cout << "  --snapshot-interval-seconds <sec>   Snapshot interval seconds (default: 3600)" << std::endl;
+    std::cout << "  --wal-sync-interval-ms <ms>         WAL sync interval ms (default: 100)" << std::endl;
+    std::cout << "  --max-wal-file-size-mb <mb>         Max WAL file size MB (default: 100)" << std::endl;
+    std::cout << "  --ttl-cleanup-interval-seconds <sec> TTL cleanup interval seconds (default: 5)" << std::endl;
+    std::cout << "  --max-ttl-seconds <sec>             Max TTL seconds (default: 2592000)" << std::endl;
+    std::cout << "  --tcp-keepalive-seconds <sec>       TCP keepalive seconds (default: 300)" << std::endl;
+    std::cout << "  --tcp-send-buffer-size <bytes>      TCP send buffer bytes (default: 65536)" << std::endl;
+    std::cout << "  --tcp-recv-buffer-size <bytes>      TCP recv buffer bytes (default: 65536)" << std::endl;
     std::cout << "  --help                  Show this help message" << std::endl;
 }

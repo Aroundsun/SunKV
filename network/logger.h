@@ -17,10 +17,15 @@ public:
     // 新增方法
     void setLevelFromName(const std::string& level_name);
     void setFile(const std::string& filename);
+    void setConsoleEnabled(bool enabled);
     
 private:
     Logger();
+    void rebuildLogger();
+
     std::shared_ptr<spdlog::logger> logger_;
+    std::string file_path_;
+    bool console_enabled_{false};
 };
 
 // Log macros using spdlog
