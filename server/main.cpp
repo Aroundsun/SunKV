@@ -130,36 +130,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        LOG_INFO("SunKV Server 启动成功");
-        LOG_INFO("监听地址 {}:{}", 
-                 config.host, 
-                 config.port);
-        
-        // 等待服务器停止 - 使用新的主循环逻辑
-        while (server->isRunning() && !server->isStopping()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        
-        // 主循环退出后执行优雅关闭
-        LOG_DEBUG("主循环已退出, running={}, stopping={}",
-                  server->isRunning(), server->isStopping());
-        
-        try {
-            if (server->isStopping()) {
-                LOG_DEBUG("即将执行优雅关闭...");
-                LOG_INFO("正在执行优雅关闭...");
-                server->stop();
-                LOG_DEBUG("优雅关闭完成");
-            } else {
-                LOG_INFO("服务器停止（未经过优雅关闭流程）");
-            }
-        } catch (const std::exception& e) {
-            LOG_ERROR("优雅关闭过程中发生异常: {}", e.what());
-        } catch (...) {
-            LOG_ERROR("优雅关闭过程中发生未知异常");
-        }
-        
-        LOG_INFO("SunKV Server 已优雅停止");
+        // Server::start() 内部会运行主循环并在退出后走唯一关闭入口（幂等 stop）
+        LOG_INFO("SunKV Server 已退出主循环并完成关闭");
         return 0;
         
     } catch (const std::exception& e) {
