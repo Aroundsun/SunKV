@@ -204,6 +204,15 @@ elseif(BUILD_TEST)
         Threads::Threads
         spdlog::spdlog
     )
+
+    # epoll 边界事件回归测试 - 验证 FIN/半关闭/RST 等边界路径
+    add_executable(epoll_edge_cases_test test/epoll_edge_cases_test.cpp
+        ${NETWORK_SOURCES}
+    )
+    target_link_libraries(epoll_edge_cases_test
+        Threads::Threads
+        spdlog::spdlog
+    )
     
     # 多线程 TCP 测试 - 验证多线程环境下的 TCP 功能
     add_executable(multithread_tcp_test test/multithread_tcp_test.cpp
@@ -317,6 +326,7 @@ elseif(BUILD_TEST)
     
     # TCP 服务器测试目标
     add_test(NAME TcpServerTest COMMAND tcp_server_test)
+    add_test(NAME EpollEdgeCasesTest COMMAND epoll_edge_cases_test)
     add_test(NAME MultiThreadTcpTest COMMAND multithread_tcp_test)
     
     # 性能和并发测试目标

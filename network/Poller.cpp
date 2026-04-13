@@ -5,6 +5,39 @@
 #include <errno.h>
 #include <string.h>
 
+namespace {
+
+static uint32_t channelEventsToEpoll(int ch_events) {
+    uint32_t ev = 0;
+    if (ch_events & Channel::kReadEventStatic) {
+        ev |= (EPOLLIN | EPOLLPRI | EPOLLRDHUP);
+    }
+    if (ch_events & Channel::kWriteEventStatic) {
+        ev |= EPOLLOUT;
+    }
+    // EPOLLERR/EPOLLHUP 一般会被内核自动上报；这里不强制订阅。
+    return ev;
+}
+
+static int epollReventsToChannel(uint32_t ep) {
+    int rev = Channel::kNoneEventStatic;
+    if (ep & (EPOLLERR)) {
+        rev |= Channel::kErrorEventStatic;
+    }
+    if (ep & (EPOLLIN | EPOLLPRI)) {
+        rev |= Channel::kReadEventStatic;
+    }
+    if (ep & (EPOLLOUT)) {
+        rev |= Channel::kWriteEventStatic;
+    }
+    if (ep & (EPOLLHUP | EPOLLRDHUP)) {
+        rev |= Channel::kCloseEventStatic;
+    }
+    return rev;
+}
+
+} // namespace
+
 // epoll 操作类型
 static const int kNew = -1;
 static const int kAdded = 1;
@@ -87,9 +120,8 @@ void Poller::updateChannel(Channel* channel) {
         update(EPOLL_CTL_ADD, channel);
     } else {
         // 已存在的 Channel
-        int fd = channel->fd();
-        assert(channels_.find(fd) != channels_.end());
-        assert(channels_[fd] == channel);
+        assert(channels_.find(channel->fd()) != channels_.end());
+        assert(channels_[channel->fd()] == channel);
         assert(index == kAdded);
         
         if (channel->isNoneEvent()) {
@@ -113,8 +145,8 @@ void Poller::removeChannel(Channel* channel) {
     int index = channel->index();
     assert(index == kAdded || index == kDeleted);
     
-    size_t n = channels_.erase(fd);
-    assert(n == 1);
+    channels_.erase(fd);
+    assert(channels_.find(fd) == channels_.end());
     
     if (index == kAdded) {
         update(EPOLL_CTL_DEL, channel);
@@ -134,7 +166,7 @@ void Poller::fillActiveChannels(int numEvents, ChannelList* activeChannels) cons
     
     for (int i = 0; i < numEvents; ++i) {
         Channel* channel = static_cast<Channel*>(events_[i].data.ptr);
-        channel->setRevents(events_[i].events);
+        channel->setRevents(epollReventsToChannel(events_[i].events));
         activeChannels->push_back(channel);
     }
 }
@@ -142,11 +174,12 @@ void Poller::fillActiveChannels(int numEvents, ChannelList* activeChannels) cons
 void Poller::update(int operation, Channel* channel) {
     struct epoll_event event;
     memset(&event, 0, sizeof(event));
-    event.events = channel->events();
+    event.events = channelEventsToEpoll(channel->events());
     event.data.ptr = channel;
     int fd = channel->fd();
     
-    LOG_DEBUG("epoll_ctl op={}, fd={}, events={}", operation, fd, channel->events());
+    const uint32_t ep_events = event.events;
+    LOG_DEBUG("epoll_ctl op={}, fd={}, ch_events={}, ep_events={}", operation, fd, channel->events(), ep_events);
     
     if (::epoll_ctl(epollFd_, operation, fd, &event) < 0) {
         LOG_ERROR("epoll_ctl op={} 失败，fd={}: {}", operation, fd, strerror(errno));

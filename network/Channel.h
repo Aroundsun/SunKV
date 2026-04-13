@@ -2,7 +2,6 @@
 
 #include <functional>
 #include <memory>
-#include "logger.h"
 
 class EventLoop;
 
@@ -67,9 +66,11 @@ public:
     // 事件状态
     enum EventType {
         kNoneEvent = 0,
-        kReadEvent = 1 << 0,   // EPOLLIN
-        kWriteEvent = 1 << 1,  // EPOLLOUT
-        kErrorEvent = 1 << 2   // EPOLLERR
+        // 这些是 Channel 内部“抽象事件位”，与 epoll/poll 常量无关
+        kReadEvent = 1 << 0,
+        kWriteEvent = 1 << 1,
+        kErrorEvent = 1 << 2,
+        kCloseEvent = 1 << 3
     };
 
     // 静态常量定义
@@ -77,6 +78,7 @@ public:
     static const int kReadEventStatic = 1 << 0;
     static const int kWriteEventStatic = 1 << 1;
     static const int kErrorEventStatic = 1 << 2;
+    static const int kCloseEventStatic = 1 << 3;
 
 private:
     void update();
