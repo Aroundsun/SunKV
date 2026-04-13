@@ -101,6 +101,13 @@ int main(int argc, char* argv[]) {
         
         // 加载命令行参数（会覆盖配置文件中的设置）
         config.loadFromArgs(argc, argv);
+
+#ifndef NDEBUG
+        // Debug 构建：未显式指定 --log-level 时默认 DEBUG，便于运行期在日志文件中看到连接/消息等
+        if (!config.log_level_from_cli) {
+            config.log_level = "DEBUG";
+        }
+#endif
         
         // 设置日志级别
         Logger::instance().setLevelFromName(config.log_level);
@@ -154,15 +161,15 @@ int main(int argc, char* argv[]) {
         }
         
         // 主循环退出后执行优雅关闭
-        std::cerr << "DEBUG: 主循环已退出, running=" << server->isRunning() 
-                  << ", stopping=" << server->isStopping() << std::endl;
+        LOG_DEBUG("主循环已退出, running={}, stopping={}",
+                  server->isRunning(), server->isStopping());
         
         try {
             if (server->isStopping()) {
-                std::cerr << "DEBUG: 即将执行优雅关闭..." << std::endl;
+                LOG_DEBUG("即将执行优雅关闭...");
                 LOG_INFO("正在执行优雅关闭...");
                 server->stop();
-                std::cerr << "DEBUG: 优雅关闭完成" << std::endl;
+                LOG_DEBUG("优雅关闭完成");
             } else {
                 LOG_INFO("服务器停止（未经过优雅关闭流程）");
             }

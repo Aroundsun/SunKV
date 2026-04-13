@@ -110,6 +110,7 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             loadFromFile(argv[++i]);
         } else if (arg == "--log-level" && i + 1 < argc) {
             log_level = argv[++i];
+            log_level_from_cli = true;
         } else if (arg == "--enable-periodic-stats-log" && i + 1 < argc) {
             std::string v = argv[++i];
             std::transform(v.begin(), v.end(), v.begin(), ::tolower);
@@ -293,6 +294,7 @@ void Config::printUsage() const {
     std::cout << "  --max-connections <n>   Max client connections (default: 1000)" << std::endl;
     std::cout << "  --data-dir <dir>        Data directory (default: ./data)" << std::endl;
     std::cout << "  --config <file>         Configuration file" << std::endl;
+    std::cout << "  --log-level <LEVEL>     DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)" << std::endl;
     std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;
     std::cout << "  --stats-log-interval <sec>          Stats log interval seconds" << std::endl;
     std::cout << "  --help                  Show this help message" << std::endl;

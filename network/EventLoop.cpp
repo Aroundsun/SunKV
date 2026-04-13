@@ -36,11 +36,11 @@ EventLoop::~EventLoop() {
     oss << threadId_;
     LOG_INFO("EventLoop 已销毁，线程 {}", oss.str());
     
-    // 在析构函数中直接调用 Poller 的方法，避免线程检查
+    // 必须通过 Channel::remove() 离开 Poller，以便将 addedToLoop_ 置 false；
+    // 仅调用 poller_->removeChannel() 会跳过该状态，~Channel 将触发 assert(!addedToLoop_)。
     if (wakeupChannel_) {
         wakeupChannel_->disableAll();
-        // 直接调用 Poller 的 removeChannel，避免 EventLoop::removeChannel 的线程检查
-        poller_->removeChannel(wakeupChannel_.get());
+        wakeupChannel_->remove();
     }
     
     close(wakeupFd_);
