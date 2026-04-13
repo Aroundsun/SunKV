@@ -1,5 +1,6 @@
 #include "Snapshot.h"
 #include "../common/DataValue.h"  // 数据值定义
+#include "../network/logger.h"
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -699,39 +700,39 @@ bool SnapshotManager::load_snapshot(std::map<std::string, std::string>& data) {
         file_stream.close();
         
         if (current_pos >= file_size) {
-            std::cerr << "DEBUG: Snapshot: Reached end of file at position " << current_pos << std::endl;
+            LOG_DEBUG("Snapshot: Reached end of file at position {}", static_cast<long long>(current_pos));
             break;
         }
         
         auto entry = reader.read_next_entry();
         if (!entry) {
-            std::cerr << "DEBUG: Snapshot: Failed to read entry at position " << current_pos << std::endl;
+            LOG_DEBUG("Snapshot: Failed to read entry at position {}", static_cast<long long>(current_pos));
             break;
         }
         
         entry_count++;
-        std::cerr << "DEBUG: Snapshot: Read entry #" << entry_count << " type=" << (int)entry->type << " key=" << entry->key << std::endl;
+        LOG_DEBUG("Snapshot: Read entry #{} type={} key={}", entry_count, static_cast<int>(entry->type), entry->key);
         
         switch (entry->type) {
         case SnapshotEntryType::DATA:
             data[entry->key] = entry->value;
-            std::cerr << "DEBUG: Snapshot: DATA " << entry->key << "=" << entry->value << std::endl;
+            LOG_DEBUG("Snapshot: DATA {}={}", entry->key, entry->value);
             break;
         case SnapshotEntryType::DELETED:
             data.erase(entry->key);
-            std::cerr << "DEBUG: Snapshot: DELETED " << entry->key << std::endl;
+            LOG_DEBUG("Snapshot: DELETED {}", entry->key);
             break;
         case SnapshotEntryType::METADATA:
-            std::cerr << "DEBUG: Snapshot: METADATA entry" << std::endl;
+            LOG_DEBUG("Snapshot: METADATA entry");
             break;
         }
     }
     
     if (entry_count >= max_entries) {
-        std::cerr << "DEBUG: Snapshot: Reached maximum entry limit (" << max_entries << ")" << std::endl;
+        LOG_DEBUG("Snapshot: Reached maximum entry limit ({})", max_entries);
     }
     
-    std::cerr << "DEBUG: Snapshot: Read " << entry_count << " entries total" << std::endl;
+    LOG_DEBUG("Snapshot: Read {} entries total", entry_count);
     return true;
 }
 

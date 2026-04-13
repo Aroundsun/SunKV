@@ -50,6 +50,9 @@ private:
     // fd 到 Channel 的映射
     using ChannelMap = std::map<int, Channel*>;
     ChannelMap channels_;
+
+    // 采样用计数器：降低 Debug 下高频 poll 日志量
+    uint64_t poll_calls_{0};
     
     // 初始事件列表大小
     static const int kInitEventListSize;
