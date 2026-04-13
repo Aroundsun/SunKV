@@ -13,6 +13,7 @@ mkdir -p "${LOG_DIR}"
 
 TS="$(date +%Y%m%d_%H%M%S)"
 OUT_LOG="${LOG_DIR}/functional_suite_${TS}.log"
+SERVER_LOG="${LOG_DIR}/functional_suite_server_${TS}.log"
 
 cleanup() {
   pkill -TERM -x sunkv 2>/dev/null || true
@@ -22,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[1/4] start server" | tee -a "${OUT_LOG}"
-"${SERVER_BIN}" --port "${PORT}" --log-level INFO --enable-console-log false >>"${OUT_LOG}" 2>&1 &
+"${SERVER_BIN}" --port "${PORT}" --log-level INFO --enable-console-log false --log-strategy fixed --log-file "${SERVER_LOG}" &
 sleep 2
 
 echo "[2/4] basic commands" | tee -a "${OUT_LOG}"
