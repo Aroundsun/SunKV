@@ -102,6 +102,17 @@ public:
     void stopMainLoop() { if (main_loop_) main_loop_->quit(); }
 
 private:
+    enum class ShutdownPhase : int {
+        NotStarted = 0,
+        Requested = 1,
+        ThreadsStopped = 2,
+        GracefulDone = 3,
+        Completed = 4,
+    };
+
+    void requestStopFromSignal();
+    void advanceShutdown(ShutdownPhase target);
+
     /**
      * @brief 初始化网络层
      */
@@ -213,6 +224,7 @@ private:
     
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态
+    std::atomic<int> shutdown_phase_{static_cast<int>(ShutdownPhase::NotStarted)};
     
     // TTL 清理相关
     std::thread ttl_cleanup_thread_;                  // TTL 清理线程

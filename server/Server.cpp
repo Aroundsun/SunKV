@@ -48,7 +48,10 @@ Server::Server(const Config& config)
 }
 
 Server::~Server() {
-    stop();
+    // 析构只兜底：避免 main/信号线程与析构重复 stop 造成“防重入掩盖问题”
+    if (running_.load() || stopping_.load()) {
+        stop();
+    }
     g_server = nullptr;
     
     // 关闭管道
@@ -121,8 +124,7 @@ bool Server::start() {
                 if (!signal_thread_running_.load()) {
                     break;
                 }
-                this->setStopping();
-                this->stopMainLoop();
+                this->requestStopFromSignal();
             } else if (n < 0 && errno == EINTR) {
                 continue;
             }
@@ -139,52 +141,80 @@ bool Server::start() {
         }
     }
     
-    
+    // 主循环退出后：执行唯一的关闭入口（幂等）
+    if (stopping_.load()) {
+        stop();
+    }
     return true;
+}
+
+void Server::requestStopFromSignal() {
+    stopping_.store(true);
+    if (main_loop_) {
+        main_loop_->quit();
+    }
+}
+
+void Server::advanceShutdown(ShutdownPhase target) {
+    int cur = shutdown_phase_.load();
+    while (cur < static_cast<int>(target)) {
+        if (shutdown_phase_.compare_exchange_weak(cur, cur + 1)) {
+            cur = cur + 1;
+        }
+    }
 }
 
 void Server::stop() {
     LOG_DEBUG("进入 Server::stop()");
-    LOG_INFO("调用 Server::stop()，running={}, stopping={}", 
-             running_.load(), stopping_.load());
-    
-    // 检查是否已经执行过优雅关闭
-    static std::atomic<bool> shutdown_executed{false};
-    if (shutdown_executed.exchange(true)) {
-        LOG_INFO("Server::stop() 优雅关闭已执行过");
-        LOG_DEBUG("Server::stop() 优雅关闭已执行过");
+    LOG_INFO("调用 Server::stop()，running={}, stopping={}, phase={}",
+             running_.load(), stopping_.load(), shutdown_phase_.load());
+
+    // 幂等：只允许前进，不允许回退
+    const int phase = shutdown_phase_.load();
+    if (phase >= static_cast<int>(ShutdownPhase::Completed)) {
+        LOG_INFO("Server::stop() 已完成（phase=Completed）");
         return;
     }
-    
-    LOG_DEBUG("Server::stop() 开始执行关闭流程");
-    LOG_INFO("正在停止 SunKV Server...");
+
     stopping_.store(true);
-    
-    // 停止信号转发线程并唤醒阻塞中的 read
-    if (signal_thread_running_.exchange(false)) {
-        uint8_t wake = 0;
-        (void)!write(pipe_fds[1], &wake, sizeof(wake));
+    advanceShutdown(ShutdownPhase::Requested);
+
+    LOG_INFO("正在停止 SunKV Server...");
+
+    // Phase: ThreadsStopped（停止后台线程，避免并发干扰关闭阶段机）
+    if (shutdown_phase_.load() < static_cast<int>(ShutdownPhase::ThreadsStopped)) {
+        // 停止信号转发线程并唤醒阻塞中的 read
+        if (signal_thread_running_.exchange(false)) {
+            uint8_t wake = 0;
+            (void)!write(pipe_fds[1], &wake, sizeof(wake));
+        }
+        if (signal_thread_.joinable()) {
+            signal_thread_.join();
+        }
+
+        // 停止 TTL 清理线程
+        ttl_cleanup_running_.store(false);
+        if (ttl_cleanup_thread_.joinable()) {
+            ttl_cleanup_thread_.join();
+        }
+
+        // 停止周期统计线程
+        stats_report_running_.store(false);
+        if (stats_report_thread_.joinable()) {
+            stats_report_thread_.join();
+        }
+
+        advanceShutdown(ShutdownPhase::ThreadsStopped);
     }
-    if (signal_thread_.joinable()) {
-        signal_thread_.join();
+
+    // Phase: GracefulDone（核心资源关闭）
+    if (shutdown_phase_.load() < static_cast<int>(ShutdownPhase::GracefulDone)) {
+        gracefulShutdown();
+        advanceShutdown(ShutdownPhase::GracefulDone);
     }
-    
-    // 停止 TTL 清理线程
-    ttl_cleanup_running_.store(false);
-    if (ttl_cleanup_thread_.joinable()) {
-        ttl_cleanup_thread_.join();
-    }
-    
-    // 停止周期统计线程
-    stats_report_running_.store(false);
-    if (stats_report_thread_.joinable()) {
-        stats_report_thread_.join();
-    }
-    
-    // 优雅关闭
-    gracefulShutdown();
-    
+
     running_.store(false);
+    advanceShutdown(ShutdownPhase::Completed);
     LOG_INFO("SunKV Server 已停止");
 }
 
