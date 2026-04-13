@@ -2,13 +2,201 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <filesystem>
 #include <algorithm>
+#include <cctype>
+#include <unordered_map>
+#include <functional>
 #include "../network/logger.h"
+
+namespace {
+
+enum class ValueType {
+    String,
+    Int,
+    Bool,
+};
+
+struct OptionSpec {
+    std::string key;         // config file key: e.g. "port"
+    std::string group;       // for sample/usage grouping only
+    std::string cli_flag;    // e.g. "--port" (empty means no cli)
+    ValueType type;
+    std::string default_value;
+    std::string description; // one-line description
+
+    std::function<bool(Config&, const std::string&)> set_from_string;
+    std::function<std::string(const Config&)> get_as_string;
+};
+
+static std::string trim(std::string s) {
+    auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!s.empty() && is_space(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && is_space(static_cast<unsigned char>(s.back()))) s.pop_back();
+    return s;
+}
+
+static std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+static bool parseBoolLoose(const std::string& raw, bool* out) {
+    std::string s = lower(trim(raw));
+    if (s == "true" || s == "1" || s == "yes" || s == "on") { *out = true; return true; }
+    if (s == "false" || s == "0" || s == "no" || s == "off") { *out = false; return true; }
+    return false;
+}
+
+static bool parseIntLoose(const std::string& raw, int* out) {
+    try {
+        size_t idx = 0;
+        std::string s = trim(raw);
+        int v = std::stoi(s, &idx);
+        if (idx != s.size()) return false;
+        *out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static const std::vector<OptionSpec>& specs() {
+    static const std::vector<OptionSpec> k = {
+        // network
+        {"host", "network", "--host", ValueType::String, "0.0.0.0", "Server bind host",
+            [](Config& c, const std::string& v) { c.host = v; return true; },
+            [](const Config& c) { return c.host; }},
+        {"port", "network", "--port", ValueType::Int, "6379", "Server port",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.port = x; return true; },
+            [](const Config& c) { return std::to_string(c.port); }},
+        {"max_connections", "network", "--max-connections", ValueType::Int, "1000", "Max client connections",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_connections = x; return true; },
+            [](const Config& c) { return std::to_string(c.max_connections); }},
+        {"thread_pool_size", "network", "--thread-pool-size", ValueType::Int, "4", "Worker thread count",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.thread_pool_size = x; return true; },
+            [](const Config& c) { return std::to_string(c.thread_pool_size); }},
+
+        // storage
+        {"data_dir", "storage", "--data-dir", ValueType::String, "./data", "Data directory",
+            [](Config& c, const std::string& v) { c.data_dir = v; return true; },
+            [](const Config& c) { return c.data_dir; }},
+        {"wal_dir", "storage", "--wal-dir", ValueType::String, "./data/wal", "WAL directory",
+            [](Config& c, const std::string& v) { c.wal_dir = v; return true; },
+            [](const Config& c) { return c.wal_dir; }},
+        {"snapshot_dir", "storage", "--snapshot-dir", ValueType::String, "./data/snapshot", "Snapshot directory",
+            [](Config& c, const std::string& v) { c.snapshot_dir = v; return true; },
+            [](const Config& c) { return c.snapshot_dir; }},
+        {"max_memory_mb", "storage", "--max-memory-mb", ValueType::Int, "1024", "Max memory (MB)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_memory_mb = x; return true; },
+            [](const Config& c) { return std::to_string(c.max_memory_mb); }},
+
+        // persistence
+        {"enable_wal", "persistence", "--enable-wal", ValueType::Bool, "true", "Enable WAL",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.enable_wal = b; return true; },
+            [](const Config& c) { return c.enable_wal ? "true" : "false"; }},
+        {"enable_snapshot", "persistence", "--enable-snapshot", ValueType::Bool, "true", "Enable snapshot",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.enable_snapshot = b; return true; },
+            [](const Config& c) { return c.enable_snapshot ? "true" : "false"; }},
+        {"snapshot_interval_seconds", "persistence", "--snapshot-interval-seconds", ValueType::Int, "3600", "Snapshot interval (seconds)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.snapshot_interval_seconds = x; return true; },
+            [](const Config& c) { return std::to_string(c.snapshot_interval_seconds); }},
+        {"wal_sync_interval_ms", "persistence", "--wal-sync-interval-ms", ValueType::Int, "100", "WAL sync interval (ms)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.wal_sync_interval_ms = x; return true; },
+            [](const Config& c) { return std::to_string(c.wal_sync_interval_ms); }},
+        {"max_wal_file_size_mb", "persistence", "--max-wal-file-size-mb", ValueType::Int, "100", "Max WAL file size (MB)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_wal_file_size_mb = x; return true; },
+            [](const Config& c) { return std::to_string(c.max_wal_file_size_mb); }},
+
+        // logging
+        {"log_level", "logging", "--log-level", ValueType::String, "INFO", "DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)",
+            [](Config& c, const std::string& v) { c.log_level = v; c.log_level_from_cli = true; return true; },
+            [](const Config& c) { return c.log_level; }},
+        {"log_file", "logging", "--log-file", ValueType::String, "./data/logs/sunkv.log", "Log file path",
+            [](Config& c, const std::string& v) { c.log_file = v; return true; },
+            [](const Config& c) { return c.log_file; }},
+        {"log_strategy", "logging", "--log-strategy", ValueType::String, "fixed", "fixed|per_run|daily",
+            [](Config& c, const std::string& v) { c.log_strategy = v; return true; },
+            [](const Config& c) { return c.log_strategy; }},
+        {"enable_console_log", "logging", "--enable-console-log", ValueType::Bool, "true", "Enable console log",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.enable_console_log = b; return true; },
+            [](const Config& c) { return c.enable_console_log ? "true" : "false"; }},
+        {"enable_periodic_stats_log", "logging", "--enable-periodic-stats-log", ValueType::Bool, "false", "Enable periodic stats log",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.enable_periodic_stats_log = b; return true; },
+            [](const Config& c) { return c.enable_periodic_stats_log ? "true" : "false"; }},
+        {"stats_log_interval_seconds", "logging", "--stats-log-interval", ValueType::Int, "30", "Stats log interval (seconds)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.stats_log_interval_seconds = x; return true; },
+            [](const Config& c) { return std::to_string(c.stats_log_interval_seconds); }},
+
+        // ttl
+        {"ttl_cleanup_interval_seconds", "ttl", "--ttl-cleanup-interval-seconds", ValueType::Int, "5", "TTL cleanup interval (seconds)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.ttl_cleanup_interval_seconds = x; return true; },
+            [](const Config& c) { return std::to_string(c.ttl_cleanup_interval_seconds); }},
+        {"max_ttl_seconds", "ttl", "--max-ttl-seconds", ValueType::Int, "2592000", "Max TTL (seconds)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_ttl_seconds = x; return true; },
+            [](const Config& c) { return std::to_string(c.max_ttl_seconds); }},
+
+        // performance
+        {"tcp_keepalive_seconds", "performance", "--tcp-keepalive-seconds", ValueType::Int, "300", "TCP keepalive seconds",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.tcp_keepalive_seconds = x; return true; },
+            [](const Config& c) { return std::to_string(c.tcp_keepalive_seconds); }},
+        {"tcp_send_buffer_size", "performance", "--tcp-send-buffer-size", ValueType::Int, "65536", "TCP send buffer size (bytes)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.tcp_send_buffer_size = x; return true; },
+            [](const Config& c) { return std::to_string(c.tcp_send_buffer_size); }},
+        {"tcp_recv_buffer_size", "performance", "--tcp-recv-buffer-size", ValueType::Int, "65536", "TCP recv buffer size (bytes)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.tcp_recv_buffer_size = x; return true; },
+            [](const Config& c) { return std::to_string(c.tcp_recv_buffer_size); }},
+    };
+    return k;
+}
+
+static const std::unordered_map<std::string, const OptionSpec*>& specByKey() {
+    static std::unordered_map<std::string, const OptionSpec*> m;
+    if (m.empty()) {
+        for (const auto& s : specs()) m.emplace(s.key, &s);
+    }
+    return m;
+}
+
+static const std::unordered_map<std::string, const OptionSpec*>& specByFlag() {
+    static std::unordered_map<std::string, const OptionSpec*> m;
+    if (m.empty()) {
+        for (const auto& s : specs()) {
+            if (!s.cli_flag.empty()) m.emplace(s.cli_flag, &s);
+        }
+    }
+    return m;
+}
+
+} // namespace
 
 Config& Config::getInstance() {
     static Config instance;
     return instance;
+}
+
+bool Config::setFromKeyValue(const std::string& key, const std::string& value, Source src) {
+    auto it = specByKey().find(key);
+    if (it == specByKey().end()) {
+        LOG_WARN("Unknown config key ignored: {}={}", key, value);
+        return false;
+    }
+
+    // 来源优先级：CLI 覆盖文件覆盖默认
+    auto src_it = source_map_.find(key);
+    if (src_it != source_map_.end()) {
+        if (static_cast<int>(src) < static_cast<int>(src_it->second)) {
+            return true; // lower priority ignored
+        }
+    }
+
+    const OptionSpec* spec = it->second;
+    if (!spec->set_from_string(*this, value)) {
+        LOG_ERROR("Invalid value for key '{}': '{}'", key, value);
+        return false;
+    }
+    source_map_[key] = src;
+    return true;
 }
 
 bool Config::loadFromFile(const std::string& filename) {
@@ -28,7 +216,7 @@ bool Config::loadFromFile(const std::string& filename) {
         if (line.empty() || line[0] == '#' || line[0] == ';') {
             continue;
         }
-        
+
         try {
             parseLine(line);
         } catch (const std::exception& e) {
@@ -37,8 +225,10 @@ bool Config::loadFromFile(const std::string& filename) {
         }
     }
     
-    // 应用配置到成员变量
-    applyConfig();
+    // 应用配置到成员变量（schema 驱动）
+    for (const auto& kv : config_map_) {
+        (void)setFromKeyValue(kv.first, kv.second, Source::ConfigFile);
+    }
     
     LOG_INFO("Config loaded from {}", filename);
     return true;
@@ -50,44 +240,8 @@ bool Config::saveToFile(const std::string& filename) const {
         LOG_ERROR("Failed to create config file: {}", filename);
         return false;
     }
-    
-    file << "# SunKV Configuration File\n";
-    file << "# Generated automatically\n\n";
-    
-    file << "[network]\n";
-    file << "host = " << host << "\n";
-    file << "port = " << port << "\n";
-    file << "max_connections = " << max_connections << "\n";
-    file << "thread_pool_size = " << thread_pool_size << "\n\n";
-    
-    file << "[storage]\n";
-    file << "data_dir = " << data_dir << "\n";
-    file << "wal_dir = " << wal_dir << "\n";
-    file << "snapshot_dir = " << snapshot_dir << "\n";
-    file << "max_memory_mb = " << max_memory_mb << "\n\n";
-    
-    file << "[persistence]\n";
-    file << "enable_wal = " << (enable_wal ? "true" : "false") << "\n";
-    file << "enable_snapshot = " << (enable_snapshot ? "true" : "false") << "\n";
-    file << "snapshot_interval_seconds = " << snapshot_interval_seconds << "\n";
-    file << "wal_sync_interval_ms = " << wal_sync_interval_ms << "\n";
-    file << "max_wal_file_size_mb = " << max_wal_file_size_mb << "\n\n";
-    
-    file << "[logging]\n";
-    file << "log_level = " << log_level << "\n";
-    file << "log_file = " << log_file << "\n";
-    file << "enable_console_log = " << (enable_console_log ? "true" : "false") << "\n";
-    file << "enable_periodic_stats_log = " << (enable_periodic_stats_log ? "true" : "false") << "\n";
-    file << "stats_log_interval_seconds = " << stats_log_interval_seconds << "\n\n";
-    
-    file << "[ttl]\n";
-    file << "ttl_cleanup_interval_seconds = " << ttl_cleanup_interval_seconds << "\n";
-    file << "max_ttl_seconds = " << max_ttl_seconds << "\n\n";
-    
-    file << "[performance]\n";
-    file << "tcp_keepalive_seconds = " << tcp_keepalive_seconds << "\n";
-    file << "tcp_send_buffer_size = " << tcp_send_buffer_size << "\n";
-    file << "tcp_recv_buffer_size = " << tcp_recv_buffer_size << "\n";
+
+    file << generateSampleConfig();
     
     LOG_INFO("Config saved to {}", filename);
     return true;
@@ -96,68 +250,26 @@ bool Config::saveToFile(const std::string& filename) const {
 void Config::loadFromArgs(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        
-        auto parseBoolArg = [&](const char* v) -> bool {
-            std::string s(v ? v : "");
-            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-            return (s == "true" || s == "1" || s == "yes" || s == "on");
-        };
 
-        if (arg == "--port" && i + 1 < argc) {
-            port = std::stoi(argv[++i]);
-        } else if (arg == "--host" && i + 1 < argc) {
-            host = argv[++i];
-        } else if (arg == "--thread-pool-size" && i + 1 < argc) {
-            thread_pool_size = std::stoi(argv[++i]);
-        } else if (arg == "--max-connections" && i + 1 < argc) {
-            max_connections = std::stoi(argv[++i]);
-        } else if (arg == "--data-dir" && i + 1 < argc) {
-            data_dir = argv[++i];
-        } else if (arg == "--wal-dir" && i + 1 < argc) {
-            wal_dir = argv[++i];
-        } else if (arg == "--snapshot-dir" && i + 1 < argc) {
-            snapshot_dir = argv[++i];
-        } else if (arg == "--max-memory-mb" && i + 1 < argc) {
-            max_memory_mb = std::stoi(argv[++i]);
-        } else if (arg == "--config" && i + 1 < argc) {
+        if (arg == "--config" && i + 1 < argc) {
             loadFromFile(argv[++i]);
-        } else if (arg == "--log-level" && i + 1 < argc) {
-            log_level = argv[++i];
-            log_level_from_cli = true;
-        } else if (arg == "--log-file" && i + 1 < argc) {
-            log_file = argv[++i];
-        } else if (arg == "--log-strategy" && i + 1 < argc) {
-            log_strategy = argv[++i];
-        } else if (arg == "--enable-console-log" && i + 1 < argc) {
-            enable_console_log = parseBoolArg(argv[++i]);
-        } else if (arg == "--enable-periodic-stats-log" && i + 1 < argc) {
-            enable_periodic_stats_log = parseBoolArg(argv[++i]);
-        } else if (arg == "--stats-log-interval" && i + 1 < argc) {
-            stats_log_interval_seconds = std::stoi(argv[++i]);
-        } else if (arg == "--enable-wal" && i + 1 < argc) {
-            enable_wal = parseBoolArg(argv[++i]);
-        } else if (arg == "--enable-snapshot" && i + 1 < argc) {
-            enable_snapshot = parseBoolArg(argv[++i]);
-        } else if (arg == "--snapshot-interval-seconds" && i + 1 < argc) {
-            snapshot_interval_seconds = std::stoi(argv[++i]);
-        } else if (arg == "--wal-sync-interval-ms" && i + 1 < argc) {
-            wal_sync_interval_ms = std::stoi(argv[++i]);
-        } else if (arg == "--max-wal-file-size-mb" && i + 1 < argc) {
-            max_wal_file_size_mb = std::stoi(argv[++i]);
-        } else if (arg == "--ttl-cleanup-interval-seconds" && i + 1 < argc) {
-            ttl_cleanup_interval_seconds = std::stoi(argv[++i]);
-        } else if (arg == "--max-ttl-seconds" && i + 1 < argc) {
-            max_ttl_seconds = std::stoi(argv[++i]);
-        } else if (arg == "--tcp-keepalive-seconds" && i + 1 < argc) {
-            tcp_keepalive_seconds = std::stoi(argv[++i]);
-        } else if (arg == "--tcp-send-buffer-size" && i + 1 < argc) {
-            tcp_send_buffer_size = std::stoi(argv[++i]);
-        } else if (arg == "--tcp-recv-buffer-size" && i + 1 < argc) {
-            tcp_recv_buffer_size = std::stoi(argv[++i]);
-        } else if (arg == "--help") {
+            continue;
+        }
+        if (arg == "--help") {
             printUsage();
             exit(0);
         }
+
+        auto fit = specByFlag().find(arg);
+        if (fit == specByFlag().end()) {
+            continue;
+        }
+        if (i + 1 >= argc) {
+            LOG_ERROR("Missing value for arg: {}", arg);
+            continue;
+        }
+        const char* v = argv[++i];
+        (void)setFromKeyValue(fit->second->key, v ? v : "", Source::CommandLine);
     }
 }
 
@@ -291,65 +403,48 @@ void Config::parseLine(const std::string& line) {
 }
 
 void Config::applyConfig() {
-    host = getString("host", host);
-    port = getInt("port", port);
-    max_connections = getInt("max_connections", max_connections);
-    thread_pool_size = getInt("thread_pool_size", thread_pool_size);
-    
-    data_dir = getString("data_dir", data_dir);
-    wal_dir = getString("wal_dir", wal_dir);
-    snapshot_dir = getString("snapshot_dir", snapshot_dir);
-    max_memory_mb = getInt("max_memory_mb", max_memory_mb);
-    
-    enable_wal = getBool("enable_wal", enable_wal);
-    enable_snapshot = getBool("enable_snapshot", enable_snapshot);
-    snapshot_interval_seconds = getInt("snapshot_interval_seconds", snapshot_interval_seconds);
-    wal_sync_interval_ms = getInt("wal_sync_interval_ms", wal_sync_interval_ms);
-    max_wal_file_size_mb = getInt("max_wal_file_size_mb", max_wal_file_size_mb);
-    
-    log_level = getString("log_level", log_level);
-    log_file = getString("log_file", log_file);
-    log_strategy = getString("log_strategy", log_strategy);
-    enable_console_log = getBool("enable_console_log", enable_console_log);
-    enable_periodic_stats_log = getBool("enable_periodic_stats_log", enable_periodic_stats_log);
-    stats_log_interval_seconds = getInt("stats_log_interval_seconds", stats_log_interval_seconds);
-    
-    ttl_cleanup_interval_seconds = getInt("ttl_cleanup_interval_seconds", ttl_cleanup_interval_seconds);
-    max_ttl_seconds = getInt("max_ttl_seconds", max_ttl_seconds);
-    
-    tcp_keepalive_seconds = getInt("tcp_keepalive_seconds", tcp_keepalive_seconds);
-    tcp_send_buffer_size = getInt("tcp_send_buffer_size", tcp_send_buffer_size);
-    tcp_recv_buffer_size = getInt("tcp_recv_buffer_size", tcp_recv_buffer_size);
+    // 历史遗留：之前 parseLine()->config_map_ 再手工 apply 到成员变量。
+    // 现在用 schema 的 setFromKeyValue() 直接落到成员变量，该函数保持为空以避免旧路径误用。
 }
 
 void Config::printUsage() const {
     std::cout << "SunKV - High Performance Key-Value Store" << std::endl;
     std::cout << "Usage: sunkv [options]" << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  --port <port>           Server port (default: 6379)" << std::endl;
-    std::cout << "  --host <host>           Server host (default: 0.0.0.0)" << std::endl;
-    std::cout << "  --thread-pool-size <n>  Worker thread count (default: 4)" << std::endl;
-    std::cout << "  --max-connections <n>   Max client connections (default: 1000)" << std::endl;
-    std::cout << "  --data-dir <dir>        Data directory (default: ./data)" << std::endl;
-    std::cout << "  --wal-dir <dir>         WAL directory (default: ./data/wal)" << std::endl;
-    std::cout << "  --snapshot-dir <dir>    Snapshot directory (default: ./data/snapshot)" << std::endl;
-    std::cout << "  --max-memory-mb <n>     Max memory MB (default: 1024)" << std::endl;
     std::cout << "  --config <file>         Configuration file" << std::endl;
-    std::cout << "  --log-level <LEVEL>     DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)" << std::endl;
-    std::cout << "  --log-file <path>       Log file path template (default: ./data/logs/sunkv.log)" << std::endl;
-    std::cout << "  --log-strategy <name>   fixed|per_run|daily (default: fixed)" << std::endl;
-    std::cout << "  --enable-console-log <bool>         Enable console log (default: true)" << std::endl;
-    std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;
-    std::cout << "  --stats-log-interval <sec>          Stats log interval seconds" << std::endl;
-    std::cout << "  --enable-wal <bool>                 Enable WAL (default: true)" << std::endl;
-    std::cout << "  --enable-snapshot <bool>            Enable snapshot (default: true)" << std::endl;
-    std::cout << "  --snapshot-interval-seconds <sec>   Snapshot interval seconds (default: 3600)" << std::endl;
-    std::cout << "  --wal-sync-interval-ms <ms>         WAL sync interval ms (default: 100)" << std::endl;
-    std::cout << "  --max-wal-file-size-mb <mb>         Max WAL file size MB (default: 100)" << std::endl;
-    std::cout << "  --ttl-cleanup-interval-seconds <sec> TTL cleanup interval seconds (default: 5)" << std::endl;
-    std::cout << "  --max-ttl-seconds <sec>             Max TTL seconds (default: 2592000)" << std::endl;
-    std::cout << "  --tcp-keepalive-seconds <sec>       TCP keepalive seconds (default: 300)" << std::endl;
-    std::cout << "  --tcp-send-buffer-size <bytes>      TCP send buffer bytes (default: 65536)" << std::endl;
-    std::cout << "  --tcp-recv-buffer-size <bytes>      TCP recv buffer bytes (default: 65536)" << std::endl;
+
+    std::string last_group;
+    for (const auto& s : specs()) {
+        if (s.cli_flag.empty()) continue;
+        if (s.group != last_group) {
+            std::cout << std::endl;
+            std::cout << "  [" << s.group << "]" << std::endl;
+            last_group = s.group;
+        }
+        std::cout << "  " << s.cli_flag << " <value>"
+                  << "    " << s.description
+                  << " (default: " << s.default_value << ")"
+                  << std::endl;
+    }
     std::cout << "  --help                  Show this help message" << std::endl;
+}
+
+std::string Config::generateSampleConfig() const {
+    std::ostringstream out;
+    out << "# SunKV Configuration File\n";
+    out << "# NOTE: 该配置文件语义是“扁平 key=value”。这里的分组仅用于阅读。\n";
+    out << "#       CLI 优先级高于配置文件；配置文件优先级高于内置默认值。\n";
+    out << "# Generated automatically\n\n";
+
+    std::string last_group;
+    for (const auto& s : specs()) {
+        if (s.group != last_group) {
+            out << "\n# [" << s.group << "]\n";
+            last_group = s.group;
+        }
+        out << "# " << s.description << " (default: " << s.default_value << ")\n";
+        out << s.key << " = " << s.get_as_string(*this) << "\n";
+    }
+    out << "\n";
+    return out.str();
 }

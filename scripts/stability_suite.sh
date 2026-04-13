@@ -21,16 +21,17 @@ STRESS_PIPELINE="${STRESS_PIPELINE:-1}"
 RECOVERY_MODE="${RECOVERY_MODE:-snapshot}"  # snapshot | wal
 
 TS="$(date +%Y%m%d_%H%M%S)"
-REPORT_FILE="${LOG_DIR}/stage8_3_stability_report_${TS}.txt"
-LONG_LOG="${LOG_DIR}/stage8_3_longrun_${TS}.log"
-RSS_LOG="${LOG_DIR}/stage8_3_rss_${TS}.csv"
-STRESS_LOG="${LOG_DIR}/stage8_3_stress_${TS}.log"
-RECOVERY_LOG="${LOG_DIR}/stage8_3_recovery_${TS}.log"
+REPORT_FILE="${LOG_DIR}/stability_suite_report_${TS}.txt"
+LONG_LOG="${LOG_DIR}/stability_suite_server_${TS}.log"
+RSS_LOG="${LOG_DIR}/stability_suite_rss_${TS}.csv"
+STRESS_LOG="${LOG_DIR}/stability_suite_stress_${TS}.log"
+RECOVERY_LOG="${LOG_DIR}/stability_suite_recovery_${TS}.log"
 
 SERVER_PID=""
 
 start_server() {
-  "${SERVER_BIN}" --port "${PORT}" --thread-pool-size "${THREAD_POOL_SIZE}" --max-connections "${MAX_CONNECTIONS}" >"${LONG_LOG}" 2>&1 &
+  "${SERVER_BIN}" --port "${PORT}" --thread-pool-size "${THREAD_POOL_SIZE}" --max-connections "${MAX_CONNECTIONS}" \
+    --log-level INFO --enable-console-log false --log-strategy fixed --log-file "${LONG_LOG}" &
   SERVER_PID=$!
   sleep 2
   if ! kill -0 "${SERVER_PID}" 2>/dev/null; then

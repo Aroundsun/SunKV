@@ -2,8 +2,6 @@
 
 #include <string>
 #include <map>
-#include <memory>
-#include <chrono>
 
 // 配置类
 class Config {
@@ -81,6 +79,9 @@ public:
     
     // 打印使用说明
     void printUsage() const;
+
+    // 生成示例配置文件内容（与解析语义一致：扁平 key=value）
+    std::string generateSampleConfig() const;
     
     // 析构函数需要公开，因为 unique_ptr 需要调用
     ~Config() = default;
@@ -89,6 +90,17 @@ private:
     Config() = default;
     
     std::map<std::string, std::string> config_map_;
+
+    enum class Source {
+        Default = 0,
+        ConfigFile = 1,
+        CommandLine = 2,
+    };
+
+    std::map<std::string, Source> source_map_;
+
+    // schema 驱动的设置入口：做类型解析/校验，并记录来源
+    bool setFromKeyValue(const std::string& key, const std::string& value, Source src);
     
     // 解析配置行
     void parseLine(const std::string& line);

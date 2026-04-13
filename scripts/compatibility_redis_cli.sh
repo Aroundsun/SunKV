@@ -13,6 +13,7 @@ mkdir -p "${LOG_DIR}"
 
 TS="$(date +%Y%m%d_%H%M%S)"
 OUT_LOG="${LOG_DIR}/redis_cli_compat_${TS}.log"
+SERVER_LOG="${LOG_DIR}/redis_cli_compat_server_${TS}.log"
 
 cleanup() {
   pkill -TERM -x sunkv 2>/dev/null || true
@@ -27,7 +28,7 @@ if ! command -v redis-cli >/dev/null 2>&1; then
 fi
 
 echo "[1/3] start server" | tee -a "${OUT_LOG}"
-"${SERVER_BIN}" --port "${PORT}" --log-level INFO --enable-console-log false >>"${OUT_LOG}" 2>&1 &
+"${SERVER_BIN}" --port "${PORT}" --log-level INFO --enable-console-log false --log-strategy fixed --log-file "${SERVER_LOG}" &
 sleep 2
 
 echo "[2/3] redis-cli basic compatibility" | tee -a "${OUT_LOG}"
