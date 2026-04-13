@@ -110,7 +110,7 @@ static const std::vector<OptionSpec>& specs() {
 
         // logging
         {"log_level", "logging", "--log-level", ValueType::String, "INFO", "DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)",
-            [](Config& c, const std::string& v) { c.log_level = v; c.log_level_from_cli = true; return true; },
+            [](Config& c, const std::string& v) { c.log_level = v; return true; },
             [](const Config& c) { return c.log_level; }},
         {"log_file", "logging", "--log-file", ValueType::String, "./data/logs/sunkv.log", "Log file path",
             [](Config& c, const std::string& v) { c.log_file = v; return true; },
@@ -172,7 +172,17 @@ static const std::unordered_map<std::string, const OptionSpec*>& specByFlag() {
 
 Config& Config::getInstance() {
     static Config instance;
+    instance.initSchemaDefaultsOnce();
     return instance;
+}
+
+void Config::initSchemaDefaultsOnce() {
+    static bool inited = false;
+    if (inited) return;
+    inited = true;
+    for (const auto& s : specs()) {
+        (void)setFromKeyValue(s.key, s.default_value, Source::Default);
+    }
 }
 
 bool Config::setFromKeyValue(const std::string& key, const std::string& value, Source src) {
@@ -200,6 +210,7 @@ bool Config::setFromKeyValue(const std::string& key, const std::string& value, S
 }
 
 bool Config::loadFromFile(const std::string& filename) {
+    initSchemaDefaultsOnce();
     std::ifstream file(filename);
     if (!file.is_open()) {
         LOG_ERROR("Failed to open config file: {}", filename);
@@ -248,11 +259,31 @@ bool Config::saveToFile(const std::string& filename) const {
 }
 
 void Config::loadFromArgs(int argc, char* argv[]) {
+    initSchemaDefaultsOnce();
+
+    // 固定管线：default → config file(可选且只加载一次) → CLI
+    std::string config_path;
+    int config_count = 0;
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[i + 1] ? argv[i + 1] : "";
+            ++config_count;
+            ++i;
+        }
+    }
+    if (config_count > 1) {
+        LOG_WARN("--config 出现多次（{} 次），将使用最后一次: {}", config_count, config_path);
+    }
+    if (!config_path.empty()) {
+        (void)loadFromFile(config_path);
+    }
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
         if (arg == "--config" && i + 1 < argc) {
-            loadFromFile(argv[++i]);
+            ++i; // 已在前置阶段处理
             continue;
         }
         if (arg == "--help") {
@@ -269,8 +300,24 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             continue;
         }
         const char* v = argv[++i];
-        (void)setFromKeyValue(fit->second->key, v ? v : "", Source::CommandLine);
+        const std::string value = v ? v : "";
+        (void)setFromKeyValue(fit->second->key, value, Source::CommandLine);
+        if (fit->second->key == "log_level") {
+            log_level_from_cli = true;
+        }
     }
+}
+
+void Config::applyBuildDefaults() {
+    initSchemaDefaultsOnce();
+#ifndef NDEBUG
+    // Debug 构建：仅在“未通过文件/CLI 显式设置”时才提升到 DEBUG
+    auto it = source_map_.find("log_level");
+    const bool has_user_value = (it != source_map_.end() && it->second != Source::Default);
+    if (!has_user_value && !log_level_from_cli) {
+        (void)setFromKeyValue("log_level", "DEBUG", Source::Default);
+    }
+#endif
 }
 
 std::string Config::getString(const std::string& key, const std::string& defaultValue) const {
@@ -444,6 +491,33 @@ std::string Config::generateSampleConfig() const {
         }
         out << "# " << s.description << " (default: " << s.default_value << ")\n";
         out << s.key << " = " << s.get_as_string(*this) << "\n";
+    }
+    out << "\n";
+    return out.str();
+}
+
+std::string Config::dumpEffectiveConfigWithSource() const {
+    auto srcName = [](Source s) -> const char* {
+        switch (s) {
+            case Source::Default: return "default";
+            case Source::ConfigFile: return "file";
+            case Source::CommandLine: return "cli";
+        }
+        return "unknown";
+    };
+
+    std::ostringstream out;
+    out << "=== Effective config ===\n";
+    std::string last_group;
+    for (const auto& s : specs()) {
+        if (s.group != last_group) {
+            out << "\n[" << s.group << "]\n";
+            last_group = s.group;
+        }
+        Source src = Source::Default;
+        auto it = source_map_.find(s.key);
+        if (it != source_map_.end()) src = it->second;
+        out << s.key << " = " << s.get_as_string(*this) << "    (" << srcName(src) << ")\n";
     }
     out << "\n";
     return out.str();
