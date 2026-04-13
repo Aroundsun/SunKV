@@ -59,11 +59,14 @@ cmake --build . -j$(nproc)
 ./build/sunkv --port 6379 --thread-pool-size 4 --max-connections 2000
 ```
 
+说明：
+- 日志默认写入 `./data/logs/sunkv.log`，并通过 rotating 机制自动滚动。
+
 ## 测试入口
 
-- 功能测试（8.1）：`test/functional_suite_stage8_1.sh`（历史脚本）
-- 性能与 profiling（8.2）：`test/stage8_2_root_profile.sh`
-- 稳定性测试（8.3）：`test/stage8_3_stability_suite.sh`
+- 功能测试（8.1）：`scripts/functional_suite.sh`
+- 性能与 profiling（8.2）：`scripts/perf_profile.sh`
+- 稳定性测试（8.3）：`scripts/stability_suite.sh`
 
 ## 文档索引
 

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <filesystem>
 #include <algorithm>
+#include "../network/logger.h"
 
 Config& Config::getInstance() {
     static Config instance;
@@ -13,7 +14,7 @@ Config& Config::getInstance() {
 bool Config::loadFromFile(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Failed to open config file: " << filename << std::endl;
+        LOG_ERROR("Failed to open config file: {}", filename);
         return false;
     }
     
@@ -31,7 +32,7 @@ bool Config::loadFromFile(const std::string& filename) {
         try {
             parseLine(line);
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing line " << line_number << ": " << e.what() << std::endl;
+            LOG_ERROR("Error parsing line {}: {}", line_number, e.what());
             return false;
         }
     }
@@ -39,14 +40,14 @@ bool Config::loadFromFile(const std::string& filename) {
     // 应用配置到成员变量
     applyConfig();
     
-    std::cout << "Config loaded from " << filename << std::endl;
+    LOG_INFO("Config loaded from {}", filename);
     return true;
 }
 
 bool Config::saveToFile(const std::string& filename) const {
     std::ofstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Failed to create config file: " << filename << std::endl;
+        LOG_ERROR("Failed to create config file: {}", filename);
         return false;
     }
     
@@ -88,7 +89,7 @@ bool Config::saveToFile(const std::string& filename) const {
     file << "tcp_send_buffer_size = " << tcp_send_buffer_size << "\n";
     file << "tcp_recv_buffer_size = " << tcp_recv_buffer_size << "\n";
     
-    std::cout << "Config saved to " << filename << std::endl;
+    LOG_INFO("Config saved to {}", filename);
     return true;
 }
 
@@ -125,6 +126,8 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             log_level_from_cli = true;
         } else if (arg == "--log-file" && i + 1 < argc) {
             log_file = argv[++i];
+        } else if (arg == "--log-strategy" && i + 1 < argc) {
+            log_strategy = argv[++i];
         } else if (arg == "--enable-console-log" && i + 1 < argc) {
             enable_console_log = parseBoolArg(argv[++i]);
         } else if (arg == "--enable-periodic-stats-log" && i + 1 < argc) {
@@ -169,7 +172,7 @@ int Config::getInt(const std::string& key, int defaultValue) const {
         try {
             return std::stoi(it->second);
         } catch (const std::exception&) {
-            std::cerr << "Invalid integer value for key: " << key << std::endl;
+            LOG_ERROR("Invalid integer value for key: {}", key);
         }
     }
     return defaultValue;
@@ -201,32 +204,32 @@ bool Config::validate() const {
     bool valid = true;
     
     if (port <= 0 || port > 65535) {
-        std::cerr << "Invalid port: " << port << " (must be 1-65535)" << std::endl;
+        LOG_ERROR("Invalid port: {} (must be 1-65535)", port);
         valid = false;
     }
     
     if (max_connections <= 0) {
-        std::cerr << "Invalid max_connections: " << max_connections << std::endl;
+        LOG_ERROR("Invalid max_connections: {}", max_connections);
         valid = false;
     }
     
     if (thread_pool_size <= 0) {
-        std::cerr << "Invalid thread_pool_size: " << thread_pool_size << std::endl;
+        LOG_ERROR("Invalid thread_pool_size: {}", thread_pool_size);
         valid = false;
     }
     
     if (max_memory_mb <= 0) {
-        std::cerr << "Invalid max_memory_mb: " << max_memory_mb << std::endl;
+        LOG_ERROR("Invalid max_memory_mb: {}", max_memory_mb);
         valid = false;
     }
     
     if (snapshot_interval_seconds <= 0) {
-        std::cerr << "Invalid snapshot_interval_seconds: " << snapshot_interval_seconds << std::endl;
+        LOG_ERROR("Invalid snapshot_interval_seconds: {}", snapshot_interval_seconds);
         valid = false;
     }
     
     if (stats_log_interval_seconds <= 0) {
-        std::cerr << "Invalid stats_log_interval_seconds: " << stats_log_interval_seconds << std::endl;
+        LOG_ERROR("Invalid stats_log_interval_seconds: {}", stats_log_interval_seconds);
         valid = false;
     }
     
@@ -306,6 +309,7 @@ void Config::applyConfig() {
     
     log_level = getString("log_level", log_level);
     log_file = getString("log_file", log_file);
+    log_strategy = getString("log_strategy", log_strategy);
     enable_console_log = getBool("enable_console_log", enable_console_log);
     enable_periodic_stats_log = getBool("enable_periodic_stats_log", enable_periodic_stats_log);
     stats_log_interval_seconds = getInt("stats_log_interval_seconds", stats_log_interval_seconds);
@@ -333,6 +337,7 @@ void Config::printUsage() const {
     std::cout << "  --config <file>         Configuration file" << std::endl;
     std::cout << "  --log-level <LEVEL>     DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)" << std::endl;
     std::cout << "  --log-file <path>       Log file path template (default: ./data/logs/sunkv.log)" << std::endl;
+    std::cout << "  --log-strategy <name>   fixed|per_run|daily (default: fixed)" << std::endl;
     std::cout << "  --enable-console-log <bool>         Enable console log (default: true)" << std::endl;
     std::cout << "  --enable-periodic-stats-log <bool>  Enable periodic stats log" << std::endl;
     std::cout << "  --stats-log-interval <sec>          Stats log interval seconds" << std::endl;
