@@ -29,6 +29,8 @@ public:
     
     // 日志配置
     std::string log_level = "INFO";
+    /** 是否由命令行传入过 --log-level（用于 Debug 构建下默认升級日志级别时保留用户显式指定） */
+    bool log_level_from_cli = false;
     std::string log_file = "./data/logs/sunkv.log";
     bool enable_console_log = true;
     bool enable_periodic_stats_log = false;

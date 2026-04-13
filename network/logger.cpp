@@ -35,18 +35,19 @@ std::shared_ptr<spdlog::logger> Logger::getLogger() const {
 }
 
 void Logger::setLevelFromName(const std::string& level_name) {
+    spdlog::level::level_enum lv = spdlog::level::info;
     if (level_name == "DEBUG") {
-        logger_->set_level(spdlog::level::debug);
+        lv = spdlog::level::debug;
     } else if (level_name == "INFO") {
-        logger_->set_level(spdlog::level::info);
+        lv = spdlog::level::info;
     } else if (level_name == "WARN") {
-        logger_->set_level(spdlog::level::warn);
+        lv = spdlog::level::warn;
     } else if (level_name == "ERROR") {
-        logger_->set_level(spdlog::level::err);
-    } else {
-        // 默认使用 info 级别
-        logger_->set_level(spdlog::level::info);
+        lv = spdlog::level::err;
     }
+    logger_->set_level(lv);
+    // 与当前级别对齐：DEBUG 时也要及时刷盘，否则文件里看不到运行期 debug 行
+    logger_->flush_on(lv);
 }
 
 void Logger::setFile(const std::string& filename) {
@@ -73,5 +74,5 @@ void Logger::setFile(const std::string& filename) {
     
     logger_->set_level(current_level);  // 恢复之前的日志级别
     logger_->set_pattern("[%H:%M:%S.%e] [%n] [%^%l%$] [%t] %v");
-    logger_->flush_on(spdlog::level::debug);  // 在 DEBUG 级别也刷新
+    logger_->flush_on(current_level);
 }
