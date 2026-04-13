@@ -78,12 +78,8 @@ int main(int argc, char* argv[]) {
         // 加载命令行参数（会覆盖配置文件中的设置）
         config.loadFromArgs(argc, argv);
 
-#ifndef NDEBUG
-        // Debug 构建：未显式指定 --log-level 时默认 DEBUG，便于运行期在日志文件中看到连接/消息等
-        if (!config.log_level_from_cli) {
-            config.log_level = "DEBUG";
-        }
-#endif
+        // 构建类型相关的隐式默认值（仅在用户未显式设置时生效）
+        config.applyBuildDefaults();
         
         // 设置日志级别
         Logger::instance().setLevelFromName(config.log_level);
@@ -99,6 +95,9 @@ int main(int argc, char* argv[]) {
             Logger::instance().setFile(config.log_file);
             LOG_INFO("日志文件: {}", config.log_file);
         }
+
+        // 启动时打印一次最终配置摘要与来源
+        LOG_INFO("\n{}", config.dumpEffectiveConfigWithSource());
         
         LOG_INFO("SunKV Server v1.0.0 正在启动...");
         LOG_INFO("配置加载成功");

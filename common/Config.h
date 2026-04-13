@@ -60,6 +60,9 @@ public:
     
     // 从命令行参数加载
     void loadFromArgs(int argc, char* argv[]);
+
+    // Debug 构建下的隐式默认值（仅在用户未通过文件/CLI 显式设置时生效）
+    void applyBuildDefaults();
     
     // 获取配置值
     std::string getString(const std::string& key, const std::string& defaultValue = "") const;
@@ -82,6 +85,9 @@ public:
 
     // 生成示例配置文件内容（与解析语义一致：扁平 key=value）
     std::string generateSampleConfig() const;
+
+    // 打印一次性“最终配置摘要 + 来源（default/file/cli）”
+    std::string dumpEffectiveConfigWithSource() const;
     
     // 析构函数需要公开，因为 unique_ptr 需要调用
     ~Config() = default;
@@ -101,6 +107,8 @@ private:
 
     // schema 驱动的设置入口：做类型解析/校验，并记录来源
     bool setFromKeyValue(const std::string& key, const std::string& value, Source src);
+
+    void initSchemaDefaultsOnce();
     
     // 解析配置行
     void parseLine(const std::string& line);
