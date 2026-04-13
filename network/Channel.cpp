@@ -1,12 +1,12 @@
 #include "Channel.h"
 #include "EventLoop.h"
-#include <poll.h>
 #include <unistd.h>
 
 const int Channel::kNoneEventStatic;
 const int Channel::kReadEventStatic;
 const int Channel::kWriteEventStatic;
 const int Channel::kErrorEventStatic;
+const int Channel::kCloseEventStatic;
 
 Channel::Channel(EventLoop* loop, int fd)
     : loop_(loop),
@@ -48,29 +48,29 @@ void Channel::handleEvent() {
 }
 
 void Channel::handleEventWithGuard() {
-    // 处理错误事件
-    if ((revents_ & POLLHUP) && !(revents_ & POLLIN)) {
+    // close/hup 优先：保持与历史行为一致，避免在非读事件下误触发 readCallback
+    if ((revents_ & kCloseEventStatic) && !(revents_ & kReadEventStatic)) {
         if (closeCallback_) {
             closeCallback_();
         }
     }
     
     // 处理错误
-    if (revents_ & (POLLERR | POLLNVAL)) {
+    if (revents_ & kErrorEventStatic) {
         if (errorCallback_) {
             errorCallback_();
         }
     }
     
     // 处理可读事件
-    if (revents_ & (POLLIN | POLLPRI | POLLRDHUP)) {
+    if (revents_ & kReadEventStatic) {
         if (readCallback_) {
             readCallback_();
         }
     }
     
     // 处理可写事件
-    if (revents_ & POLLOUT) {
+    if (revents_ & kWriteEventStatic) {
         if (writeCallback_) {
             writeCallback_();
         }
