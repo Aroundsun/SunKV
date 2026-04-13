@@ -487,5 +487,8 @@ elseif(BUILD_TEST)
     # add_test(NAME SnapshotTest COMMAND snapshot_test)  # 文件不存在，暂时注释
     add_test(NAME RecoveryTest COMMAND recovery_test)
     add_test(NAME PersistenceTest COMMAND persistence_test)
+
+    # 防止运行期代码出现 stdout/stderr 双轨日志
+    add_test(NAME NoStdioRuntimeTest COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/no_stdio_runtime_check.sh")
     
 endif()

@@ -2,9 +2,6 @@
 #include <memory>
 #include <signal.h>
 #include <filesystem>
-#include <chrono>
-#include <iomanip>
-#include <sstream>
 #include "network/logger.h"
 #include "Server.h"
 #include "../common/Config.h"
@@ -31,7 +28,7 @@ public:
                 
                 // 检查进程是否仍在运行
                 if (kill(existing_pid, 0) == 0) {
-                    std::cerr << "SunKV 已在运行，PID: " << existing_pid << std::endl;
+                    LOG_ERROR("SunKV 已在运行，PID: {}", existing_pid);
                     return false;
                 }
             }
@@ -59,37 +56,13 @@ private:
 };
 
 /**
- * @brief 基于模板日志路径生成本次运行的独立日志文件
- *
- * 例如：./data/logs/sunkv.log -> ./data/logs/sunkv_20260408_211500.log
- */
-static std::string buildRunLogFilePath(const std::string& base_log_file) {
-    if (base_log_file.empty()) {
-        return base_log_file;
-    }
-
-    auto now = std::chrono::system_clock::now();
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf{};
-    localtime_r(&t, &tm_buf);
-
-    std::ostringstream ts;
-    ts << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
-
-    std::filesystem::path p(base_log_file);
-    std::filesystem::path parent = p.parent_path();
-    std::string stem = p.stem().string();
-    std::string ext = p.extension().string();
-
-    std::filesystem::path run_file = parent / (stem + "_" + ts.str() + ext);
-    return run_file.string();
-}
-
-/**
  * @brief 主函数
  */
 int main(int argc, char* argv[]) {
     try {
+        // 提前初始化 Logger，避免启动早期错误落到 stdout/stderr
+        (void)Logger::instance();
+
         // 创建配置对象
         auto& config = Config::getInstance();
         
@@ -97,7 +70,7 @@ int main(int argc, char* argv[]) {
         std::string default_config = "./sunkv.conf";
         if (std::filesystem::exists(default_config)) {
             if (!config.loadFromFile(default_config)) {
-                std::cerr << "加载默认配置失败: " << default_config << std::endl;
+                LOG_ERROR("加载默认配置失败: {}", default_config);
                 return 1;
             }
         }
@@ -117,12 +90,14 @@ int main(int argc, char* argv[]) {
 
         // 是否输出到控制台（文件 + 控制台双 sink）
         Logger::instance().setConsoleEnabled(config.enable_console_log);
+
+        // 日志文件策略（fixed/per_run/daily）
+        Logger::instance().setFileStrategy(config.log_strategy);
         
         // 如果指定了日志文件，设置日志输出
         if (!config.log_file.empty()) {
-            std::string run_log_file = buildRunLogFilePath(config.log_file);
-            Logger::instance().setFile(run_log_file);
-            std::cout << "本次运行日志文件: " << run_log_file << std::endl;
+            Logger::instance().setFile(config.log_file);
+            LOG_INFO("日志文件: {}", config.log_file);
         }
         
         LOG_INFO("SunKV Server v1.0.0 正在启动...");
@@ -139,7 +114,7 @@ int main(int argc, char* argv[]) {
             
             // 守护进程
             if (daemon(0, 0) != 0) {
-                std::cerr << "守护进程化失败" << std::endl;
+                LOG_ERROR("守护进程化失败");
                 return 1;
             }
             
@@ -180,19 +155,19 @@ int main(int argc, char* argv[]) {
                 LOG_INFO("服务器停止（未经过优雅关闭流程）");
             }
         } catch (const std::exception& e) {
-            std::cerr << "ERROR: 优雅关闭过程中发生异常: " << e.what() << std::endl;
+            LOG_ERROR("优雅关闭过程中发生异常: {}", e.what());
         } catch (...) {
-            std::cerr << "ERROR: 优雅关闭过程中发生未知异常" << std::endl;
+            LOG_ERROR("优雅关闭过程中发生未知异常");
         }
         
         LOG_INFO("SunKV Server 已优雅停止");
         return 0;
         
     } catch (const std::exception& e) {
-        std::cerr << "致命错误: " << e.what() << std::endl;
+        LOG_ERROR("致命错误: {}", e.what());
         return 1;
     } catch (...) {
-        std::cerr << "未知致命错误" << std::endl;
+        LOG_ERROR("未知致命错误");
         return 1;
     }
 }

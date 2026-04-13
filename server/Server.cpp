@@ -1,13 +1,13 @@
 #include "Server.h"
 #include "../common/Config.h"
 #include <csignal>
-#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <unistd.h>
 #include <filesystem>
 #include <cstdint>
 #include <cerrno>
+#include <cstring>
 #include <algorithm>
 #include <cctype>
 #include "../network/Buffer.h"
@@ -34,7 +34,7 @@ Server::Server(const Config& config)
     
     // 创建管道用于信号处理
     if (pipe(pipe_fds) == -1) {
-        perror("pipe");
+        LOG_ERROR("pipe() 失败: {}", strerror(errno));
         return;
     }
     
@@ -1271,7 +1271,7 @@ void Server::ttlCleanupThread() {
         try {
             cleanupExpiredKeys();
         } catch (const std::exception& e) {
-            std::cerr << "ERROR: TTL 清理线程异常: " << e.what() << std::endl;
+            LOG_ERROR("TTL 清理线程异常: {}", e.what());
         }
         
         // 每5秒清理一次

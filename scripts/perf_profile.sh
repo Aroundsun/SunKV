@@ -58,26 +58,11 @@ timeout "${STRACE_SECONDS}s" sudo strace -p "${SERVER_PID}" -c -f \
   -e trace=network,read,write,epoll_wait,epoll_ctl,futex,nanosleep >/dev/null 2>&1 || true
 
 echo "[5.5/6] 等待 benchmark 结束..."
-wait "${BENCH_PID}" || true
+wait "${BENCH_PID}" 2>/dev/null || true
 
-echo "[6/6] 关闭服务端..."
-kill -TERM "${SERVER_PID}" || true
-sleep 1
-pkill -f "./build/sunkv" || true
+echo "[6/6] 停止服务端..."
+kill -TERM "${SERVER_PID}" 2>/dev/null || true
+wait "${SERVER_PID}" 2>/dev/null || true
 
-echo
-echo "===== PERF TOP ====="
-grep -E "^[[:space:]]*[0-9]+\\.[0-9]+%|^[[:space:]]*[0-9]+%|Server::|RESP|epoll|futex|read|write" "${LOG_DIR}/stage8_2_perf_report.txt" || true
+echo "DONE."
 
-echo
-echo "===== STRACE SUMMARY ====="
-if [[ -f "${LOG_DIR}/stage8_2_strace_summary.txt" ]]; then
-  sed -n '1,120p' "${LOG_DIR}/stage8_2_strace_summary.txt"
-fi
-
-echo
-echo "===== BENCH QPS ====="
-grep -E "SET:|GET:" "${LOG_DIR}/stage8_2_benchmark_qps.log" || true
-
-echo
-echo "产物目录: ${LOG_DIR}"

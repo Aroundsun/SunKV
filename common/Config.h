@@ -32,6 +32,8 @@ public:
     /** 是否由命令行传入过 --log-level（用于 Debug 构建下默认升級日志级别时保留用户显式指定） */
     bool log_level_from_cli = false;
     std::string log_file = "./data/logs/sunkv.log";
+    // 日志文件策略：fixed（固定文件名）/ per_run（按进程启动生成独立文件）/ daily（按日期归档）
+    std::string log_strategy = "fixed";
     bool enable_console_log = true;
     bool enable_periodic_stats_log = false;
     int stats_log_interval_seconds = 30;
