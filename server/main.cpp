@@ -2,6 +2,7 @@
 #include <memory>
 #include <signal.h>
 #include <filesystem>
+#include <fstream>
 #include "network/logger.h"
 #include "Server.h"
 #include "../common/Config.h"

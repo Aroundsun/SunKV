@@ -52,16 +52,18 @@ void TcpConnection::connectEstablished() {
 
 void TcpConnection::connectDestroyed() {
     loop_->assertInLoopThread();
+    // 连接销毁时统一触发连接回调，确保 Poller 上的 channel 已移除后再更新统计。
+    // 这样避免 Server 因 current_connections_ 过早到 0 而销毁仍挂在 loop 里的 Channel。
     if (state_ == TcpConnectionState::kConnected) {
         setState(TcpConnectionState::kDisconnected);
-        channel_->disableAll();
-        
-        if (connectionCallback_) {
-            connectionCallback_(shared_from_this());
-        }
     }
-    
+
+    channel_->disableAll();
     channel_->remove();
+
+    if (connectionCallback_) {
+        connectionCallback_(shared_from_this());
+    }
 }
 
 void TcpConnection::send(const std::string& message) {
@@ -139,6 +141,9 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
                 if (!channel_->isWriting()) {
                     channel_->enableWriting();
                 }
+                if (!enforceOutputBackpressure_()) {
+                    return;
+                }
             }
             return;
         }
@@ -146,6 +151,9 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
             outputBuffer_.append(bytes, len);
             if (!channel_->isWriting()) {
                 channel_->enableWriting();
+            }
+            if (!enforceOutputBackpressure_()) {
+                return;
             }
             return;
         }
@@ -173,6 +181,9 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
             }
         } else if (!channel_->isWriting()) {
             channel_->enableWriting();
+        }
+        if (!enforceOutputBackpressure_()) {
+            return;
         }
         return;
     }
@@ -203,7 +214,21 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
         if (!channel_->isWriting()) {
             channel_->enableWriting();
         }
+        if (!enforceOutputBackpressure_()) {
+            return;
+        }
     }
+}
+
+bool TcpConnection::enforceOutputBackpressure_() {
+    const size_t pending = outputBuffer_.readableBytes();
+    if (pending <= kHighWaterMarkBytes_) {
+        return true;
+    }
+    LOG_WARN("TcpConnection 输出缓冲超过高水位，连接={} pending={} bytes，执行强制关闭",
+             name_, pending);
+    forceCloseInLoop();
+    return false;
 }
 
 void TcpConnection::shutdown() {
@@ -318,10 +343,6 @@ void TcpConnection::handleClose() {
     channel_->disableAll();
     
     TcpConnectionPtr guardThis(shared_from_this());
-    if (connectionCallback_) {
-        connectionCallback_(guardThis);
-    }
-    
     if (closeCallback_) {
         closeCallback_(guardThis);
     }

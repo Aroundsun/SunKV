@@ -1,6 +1,4 @@
 #include "RESPSerializer.h"
-#include <sstream>
-#include <iomanip>
 
 std::string RESPSerializer::serialize(const RESPValue& value) {
     return serializeValue(value);
@@ -49,36 +47,7 @@ std::string RESPSerializer::serializeStatus(const std::string& status) {
 }
 
 std::string RESPSerializer::serializeValue(const RESPValue& value) {
-    switch (value.getType()) {
-        case RESPType::SIMPLE_STRING:
-            return serializeSimpleString(value.toString());
-            
-        case RESPType::ERROR:
-            return serializeError(value.toString());
-            
-        case RESPType::INTEGER:
-            // 需要从 value 中获取整数值，但 RESPValue 是抽象基类
-            // 暂时返回错误
-            return serializeError("Integer serialization not implemented");
-            
-        case RESPType::BULK_STRING:
-            if (value.isNull()) {
-                return serializeNullBulkString();
-            } else {
-                return serializeBulkString(value.toString());
-            }
-            
-        case RESPType::ARRAY:
-            if (value.isNull()) {
-                return serializeNullArray();
-            } else {
-                // 需要从 value 中获取数组，但 RESPValue 是抽象基类
-                // 暂时返回错误
-                return serializeError("Array serialization not implemented");
-            }
-            
-        default:
-            // 未知类型，返回错误
-            return serializeError("Unknown RESP type");
-    }
+    // RESPValue 的 encode() 已经覆盖了所有派生类型的正确编码逻辑，
+    // 这里统一复用 encode()，避免在抽象基类上做类型向下转型遗漏。
+    return value.encode();
 }

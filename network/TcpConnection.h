@@ -16,7 +16,6 @@
 #include <string>
 #include <atomic>
 #include "Buffer.h"
-#include "logger.h"
 
 /// 前向声明
 class EventLoop;
@@ -217,6 +216,7 @@ private:
     /// 发送数据到内核缓冲区
     void sendInLoop(const std::string& message);         ///< 在事件循环中发送字符串
     void sendInLoop(const void* data, size_t len);        ///< 在事件循环中发送数据
+    bool enforceOutputBackpressure_();                    ///< 输出缓冲背压保护
     void shutdownInLoop();                                ///< 在事件循环中关闭连接
     void forceCloseInLoop();                              ///< 在事件循环中强制关闭
     
@@ -239,6 +239,7 @@ private:
     
     Buffer inputBuffer_;                                 ///< 输入缓冲区
     Buffer outputBuffer_;                                ///< 输出缓冲区
+    static constexpr size_t kHighWaterMarkBytes_ = 8 * 1024 * 1024; ///< 输出高水位
     
     ConnectionCallback connectionCallback_;               ///< 连接回调
     MessageCallback messageCallback_;                     ///< 消息回调

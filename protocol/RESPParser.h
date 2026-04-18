@@ -3,7 +3,6 @@
 #include "RESPType.h"
 #include <string>
 #include <string_view>
-#include <memory>
 
 // RESP 解析状态
 enum class ParseState {
@@ -34,7 +33,9 @@ struct ParseResult {
     }
     
     static ParseResult makeError(const std::string& message) {
-        return {false, false, 0, nullptr, message};
+        // RESP 解析错误是“终态”：上层（例如 Server::onMessage）应当立刻生成错误响应，
+        // 而不是把它当成 incomplete 数据继续等待下一次 read。
+        return {false, true, 0, nullptr, message};
     }
 };
 
@@ -81,6 +82,7 @@ private:
     };
     
     std::vector<ArrayContext> array_stack_;
+    static constexpr size_t kMaxNestingDepth_ = 128;
     
     // 解析状态
     ParseState state_;
