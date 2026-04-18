@@ -382,12 +382,12 @@ bool Config::validate() const {
         valid = false;
     }
     
-    if (snapshot_interval_seconds <= 0) {
+    if (enable_snapshot && snapshot_interval_seconds <= 0) {
         LOG_ERROR("Invalid snapshot_interval_seconds: {}", snapshot_interval_seconds);
         valid = false;
     }
     
-    if (stats_log_interval_seconds <= 0) {
+    if (enable_periodic_stats_log && stats_log_interval_seconds <= 0) {
         LOG_ERROR("Invalid stats_log_interval_seconds: {}", stats_log_interval_seconds);
         valid = false;
     }

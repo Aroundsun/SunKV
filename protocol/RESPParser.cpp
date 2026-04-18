@@ -1,6 +1,4 @@
 #include "RESPParser.h"
-#include <sstream>
-#include <algorithm>
 #include <climits>
 
 RESPParser::RESPParser() 
@@ -26,10 +24,11 @@ ParseResult RESPParser::parse(std::string_view data) {
     size_t pos = 0;
     
     while (pos < data.size()) {
+        ParseResult step = ParseResult::makeIncomplete(processed_bytes_);
         switch (state_) {
             case ParseState::START: {
                 if (pos >= data.size()) {
-                    return ParseResult::makeIncomplete(pos);
+                    return ParseResult::makeIncomplete(processed_bytes_);
                 }
                 
                 char type_char = data[pos];
@@ -64,35 +63,48 @@ ParseResult RESPParser::parse(std::string_view data) {
             }
             
             case ParseState::SIMPLE_STRING:
-                return parseSimpleString(data, pos);
+                step = parseSimpleString(data, pos);
+                break;
                 
             case ParseState::ERROR:
-                return parseError(data, pos);
+                step = parseError(data, pos);
+                break;
                 
             case ParseState::INTEGER:
-                return parseInteger(data, pos);
+                step = parseInteger(data, pos);
+                break;
                 
             case ParseState::BULK_STRING_SIZE:
-                return parseBulkStringSize(data, pos);
+                step = parseBulkStringSize(data, pos);
+                break;
                 
             case ParseState::BULK_STRING_DATA:
-                return parseBulkStringData(data, pos);
+                step = parseBulkStringData(data, pos);
+                break;
                 
             case ParseState::ARRAY_SIZE:
-                return parseArraySize(data, pos);
+                step = parseArraySize(data, pos);
+                break;
                 
             case ParseState::ARRAY_ELEMENT:
-                return parseArrayElement(data, pos);
+                step = parseArrayElement(data, pos);
+                break;
+        }
+
+        if (!step.success || step.complete) {
+            return step;
         }
     }
     
-    return ParseResult::makeIncomplete(pos);
+    // 必须返回自本次 parse() 调用起、在输入缓冲内已消费的字节数（processed_bytes_），供上层 pipeline 正确推进偏移。
+    // 数组由 array_stack_ 迭代解析，非递归；processed_bytes_ 在各子解析步骤中累加，避免半包/粘包时偏移错乱。
+    return ParseResult::makeIncomplete(processed_bytes_);
 }
 
 ParseResult RESPParser::parseSimpleString(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
     
     std::string value{data.substr(pos, crlf_pos - pos)};
@@ -113,20 +125,20 @@ ParseResult RESPParser::parseSimpleString(std::string_view data, size_t& pos) {
             current_value_ = makeArray(ctx.elements);
             array_stack_.pop_back();
         } else {
-            // 继续解析下一个元素
+            // 数组尚未完成，继续由 parse() 主循环推进
             state_ = ParseState::START;
-            return parse(data.substr(pos));
+            return ParseResult::makeIncomplete(processed_bytes_);
         }
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_, pos);
+    return ParseResult::makeSuccess(current_value_, processed_bytes_);
 }
 
 ParseResult RESPParser::parseError(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
     
     std::string message{data.substr(pos, crlf_pos - pos)};
@@ -147,20 +159,20 @@ ParseResult RESPParser::parseError(std::string_view data, size_t& pos) {
             current_value_ = makeArray(ctx.elements);
             array_stack_.pop_back();
         } else {
-            // 继续解析下一个元素
+            // 数组尚未完成，继续由 parse() 主循环推进
             state_ = ParseState::START;
-            return parse(data.substr(pos));
+            return ParseResult::makeIncomplete(processed_bytes_);
         }
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_, pos);
+    return ParseResult::makeSuccess(current_value_, processed_bytes_);
 }
 
 ParseResult RESPParser::parseInteger(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
     
     int64_t value = parseInteger(data, pos, crlf_pos);
@@ -185,24 +197,28 @@ ParseResult RESPParser::parseInteger(std::string_view data, size_t& pos) {
             current_value_ = makeArray(ctx.elements);
             array_stack_.pop_back();
         } else {
-            // 继续解析下一个元素
+            // 数组尚未完成，继续由 parse() 主循环推进
             state_ = ParseState::START;
-            return parse(data.substr(pos));
+            return ParseResult::makeIncomplete(processed_bytes_);
         }
     }
     
     state_ = ParseState::START;
-    return ParseResult::makeSuccess(current_value_, pos);
+    return ParseResult::makeSuccess(current_value_, processed_bytes_);
 }
 
 ParseResult RESPParser::parseBulkStringSize(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
     
     int64_t size = parseInteger(data, pos, crlf_pos);
     if (size == LLONG_MAX) {
+        return ParseResult::makeError("Invalid bulk string size");
+    }
+    if (size < -1) {
+        // Redis 语义：bulk string 长度只能为 -1 (null) 或 >= 0
         return ParseResult::makeError("Invalid bulk string size");
     }
     
@@ -226,19 +242,19 @@ ParseResult RESPParser::parseBulkStringSize(std::string_view data, size_t& pos) 
                 current_value_ = makeArray(ctx.elements);
                 array_stack_.pop_back();
             } else {
-                // 继续解析下一个元素
+                // 数组尚未完成，继续由 parse() 主循环推进
                 state_ = ParseState::START;
-                return parse(data.substr(pos));
+                return ParseResult::makeIncomplete(processed_bytes_);
             }
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_, pos);
+        return ParseResult::makeSuccess(current_value_, processed_bytes_);
     } else {
-        // 解析批量字符串数据
+        // 下一步继续解析批量字符串 body
         state_ = ParseState::BULK_STRING_DATA;
         temp_data_.clear();
-        return parse(data.substr(pos));
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
 }
 
@@ -251,7 +267,7 @@ ParseResult RESPParser::parseBulkStringData(std::string_view data, size_t& pos) 
         temp_data_ += data.substr(pos);
         pos = data.length();
         processed_bytes_ += available;
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     } else {
         // 数据足够
         temp_data_ += data.substr(pos, remaining);
@@ -260,7 +276,7 @@ ParseResult RESPParser::parseBulkStringData(std::string_view data, size_t& pos) 
         
         // 检查是否有 CRLF
         if (pos + 2 > data.length()) {
-            return ParseResult::makeIncomplete(pos);
+            return ParseResult::makeIncomplete(processed_bytes_);
         }
         
         if (data[pos] != '\r' || data[pos + 1] != '\n') {
@@ -283,25 +299,29 @@ ParseResult RESPParser::parseBulkStringData(std::string_view data, size_t& pos) 
                 current_value_ = makeArray(ctx.elements);
                 array_stack_.pop_back();
             } else {
-                // 继续解析下一个元素
+                // 数组尚未完成，继续由 parse() 主循环推进
                 state_ = ParseState::START;
-                return parse(data.substr(pos));
+                return ParseResult::makeIncomplete(processed_bytes_);
             }
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_, pos);
+        return ParseResult::makeSuccess(current_value_, processed_bytes_);
     }
 }
 
 ParseResult RESPParser::parseArraySize(std::string_view data, size_t& pos) {
     size_t crlf_pos;
     if (!findCRLF(data, pos, crlf_pos)) {
-        return ParseResult::makeIncomplete(pos);
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
     
     int64_t size = parseInteger(data, pos, crlf_pos);
     if (size == LLONG_MAX) {
+        return ParseResult::makeError("Invalid array size");
+    }
+    if (size < -1) {
+        // Redis 语义：array 长度只能为 -1 (null) 或 >= 0
         return ParseResult::makeError("Invalid array size");
     }
     
@@ -324,14 +344,14 @@ ParseResult RESPParser::parseArraySize(std::string_view data, size_t& pos) {
                 current_value_ = makeArray(ctx.elements);
                 array_stack_.pop_back();
             } else {
-                // 继续解析下一个元素
+                // 数组尚未完成，继续由 parse() 主循环推进
                 state_ = ParseState::START;
-                return parse(data.substr(pos));
+                return ParseResult::makeIncomplete(processed_bytes_);
             }
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_, pos);
+        return ParseResult::makeSuccess(current_value_, processed_bytes_);
     } else if (size == 0) {
         // 空数组
         current_value_ = makeArray({});
@@ -347,14 +367,14 @@ ParseResult RESPParser::parseArraySize(std::string_view data, size_t& pos) {
                 current_value_ = makeArray(ctx.elements);
                 array_stack_.pop_back();
             } else {
-                // 继续解析下一个元素
+                // 数组尚未完成，继续由 parse() 主循环推进
                 state_ = ParseState::START;
-                return parse(data.substr(pos));
+                return ParseResult::makeIncomplete(processed_bytes_);
             }
         }
         
         state_ = ParseState::START;
-        return ParseResult::makeSuccess(current_value_, pos);
+        return ParseResult::makeSuccess(current_value_, processed_bytes_);
     } else {
         // 创建新的数组上下文
         ArrayContext ctx;
@@ -362,16 +382,21 @@ ParseResult RESPParser::parseArraySize(std::string_view data, size_t& pos) {
         ctx.count = 0;
         ctx.elements.reserve(ctx.size);
         
+        if (array_stack_.size() >= kMaxNestingDepth_) {
+            return ParseResult::makeError("RESP nesting too deep");
+        }
         array_stack_.push_back(ctx);
         state_ = ParseState::START;
-        return parse(data.substr(pos));
+        return ParseResult::makeIncomplete(processed_bytes_);
     }
 }
 
 ParseResult RESPParser::parseArrayElement(std::string_view data, size_t& pos) {
-    // 这个状态实际上不会直接使用，而是通过 START 状态来处理
+    (void)data;
+    (void)pos;
+    // 这个状态实际上不会直接使用，而是通过 START 状态来处理。
     state_ = ParseState::START;
-    return parse(data.substr(pos));
+    return ParseResult::makeIncomplete(processed_bytes_);
 }
 
 bool RESPParser::findCRLF(std::string_view data, size_t pos, size_t& crlf_pos) {

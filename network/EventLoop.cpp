@@ -56,7 +56,7 @@ void EventLoop::loop() {
     oss << threadId_;
     LOG_INFO("EventLoop {} 开始循环", oss.str());
     
-    while (!quit_) {
+    while (!quit_ || hasPendingTasks()) {
         // 等待事件
         std::vector<Channel*> activeChannels;
         int timeoutMs = poller_->poll(1000, &activeChannels);
@@ -70,6 +70,9 @@ void EventLoop::loop() {
         // 执行待处理的任务
         doPendingTasks();
     }
+
+    // quit_ 已置位且 pendingTasks_ 清空后，仍执行一次 doPendingTasks 覆盖最后一轮入队时序。
+    doPendingTasks();
     
     LOG_INFO("EventLoop {} 停止循环", oss.str());
     looping_ = false;

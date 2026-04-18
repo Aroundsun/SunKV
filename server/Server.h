@@ -5,28 +5,18 @@
 #include <thread>
 #include <vector>
 #include <mutex>
-#include <shared_mutex>
-#include <map>
-#include <set>
-#include <unordered_map>
-#include <list>
-#include <functional>
 #include <chrono>
-#include <iostream>
+#include <string>
+#include <unordered_map>
 #include "../network/TcpServer.h"
 #include "../network/TcpConnection.h"
 #include "../network/EventLoop.h"
-#include "../network/EventLoopThreadPool.h"
-#include "../command/CommandRegistry.h"
-#include "../storage/StorageEngine.h"
-#include "../storage/WAL.h"
-#include "../storage/Snapshot.h"
 #include "../protocol/RESPType.h"
-#include "../protocol/RESPSerializer.h"
 #include "../protocol/RESPParser.h"
-#include "../network/logger.h"
-#include "../common/DataValue.h"  // 数据值定义
 #include "../common/Config.h"    // 配置系统
+#include "../storage2/Factory.h"
+
+struct ArrayCmdDispatchCtx;
 
 /**
  * @brief SunKV 服务器主类
@@ -35,6 +25,8 @@
  * 包括网络处理、协议解析、命令执行、数据存储和持久化
  */
 class Server {
+    friend struct ArrayCmdDispatchCtx;
+
 public:
     /**
      * @brief 构造函数
@@ -124,16 +116,6 @@ private:
     bool initializeStorage();
     
     /**
-     * @brief 初始化持久化层
-     */
-    bool initializePersistence();
-    
-    /**
-     * @brief 加载多数据类型快照
-     */
-    bool load_multi_type_snapshot(std::map<std::string, DataValue>& data);
-    
-    /**
      * @brief 创建多数据类型快照
      */
     bool create_multi_type_snapshot();
@@ -169,13 +151,6 @@ private:
     void processCommand(const std::shared_ptr<TcpConnection>& conn, 
                     const RESPValue::Ptr& command);
     /**
-     * @brief 发送响应
-     * @param conn 连接对象
-     * @param result 命令执行结果
-     */
-    void sendResponse(const std::shared_ptr<TcpConnection>& conn, const CommandResult& result);
-    
-    /**
      * @brief 优雅关闭服务器
      */
     void gracefulShutdown();
@@ -206,21 +181,24 @@ private:
     std::string buildStatsReport();
 
 private:
+    /// RESP 数组命令表驱动（首参数为命令名）；返回 true 表示已处理。
+    bool dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
+                               const std::string& cmd_name,
+                               const std::vector<RESPValue::Ptr>& cmd_array);
+
     Config config_;                    // 配置对象
     std::unique_ptr<EventLoop> main_loop_;              // 主事件循环
     std::unique_ptr<TcpServer> tcp_server_;             // TCP 服务器
-    std::unique_ptr<EventLoopThreadPool> thread_pool_;    // 线程池
-    std::unique_ptr<CommandRegistry> command_registry_; // 命令注册表
-    StorageEngine* storage_engine_;                       // 存储引擎
-    std::unique_ptr<WALManager> wal_manager_;          // WAL 管理器
-    std::unique_ptr<SnapshotManager> snapshot_manager_; // 快照管理器
+    sunkv::storage2::Storage2Components storage2_;       // v2 存储组件组装结果
     
-    // 多类型内存存储
-    std::map<std::string, DataValue> multi_storage_;
-    std::shared_mutex multi_storage_mutex_;
-    
-    // 快照时间戳（用于 WAL 过滤）
-    uint64_t snapshot_timestamp_{0};
+    struct ConnParseState {
+        std::string pending_input;        // 连接的输入缓冲
+        RESPParser parser;                // 连接的解析器
+    };
+
+    // 每连接解析上下文：持有残留输入与可复用 RESPParser，避免每条命令重复构造解析器。
+    std::mutex conn_inbuf_mu_;
+    std::unordered_map<std::string, std::shared_ptr<ConnParseState>> conn_inbuf_;
     
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态
@@ -246,13 +224,6 @@ private:
     std::atomic<uint64_t> total_commands_{0};
     std::atomic<uint64_t> expired_keys_cleaned_{0};   // 清理的过期键计数
     std::atomic<uint64_t> total_operations_{0};
-    // 轻量性能埋点统计（纳秒）
-    std::atomic<uint64_t> profile_parse_ns_{0};
-    std::atomic<uint64_t> profile_process_ns_{0};
-    std::atomic<uint64_t> profile_message_count_{0};
     std::chrono::steady_clock::time_point start_time_;
     
-    // 线程相关
-    std::thread server_thread_;                           // 服务器线程
-    std::vector<std::thread> worker_threads_;              // 工作线程
 };

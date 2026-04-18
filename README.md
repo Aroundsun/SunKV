@@ -1,92 +1,122 @@
 # SunKV
 
-基于 C++17 的高性能 KV 存储系统，兼容 RESP 协议，采用多线程 Reactor 架构，支持 WAL + Snapshot 持久化恢复。
+SunKV 是一个基于 C++17 实现的 RESP 兼容键值存储系统，采用多线程 Reactor 网络模型。  
+当前主存储实现为 `storage2`，支持 string/list/set/hash 四类数据结构、TTL 语义，以及 WAL 与 Snapshot 组合恢复链路。
 
-## 当前状态
+## 项目概述
 
-- 阶段进度：已完成 `8.1 功能测试`、`8.2 性能优化阶段`、`8.3 稳定性测试`
-- 8.2 结果：性能较基线显著提升，当前主要区间约 `SET 24k~25k` / `GET 30k~31k`
-- 8.3 结果：1 小时长跑、内存趋势、崩溃恢复（snapshot 模式）、压力测试均通过
+SunKV 面向单机场景，提供以下核心能力：
 
-说明：性能目标 `QPS >= 50,000` 尚未完全达成，后续将继续微优化高频路径。
-
-## 主要特性
-
-- 高并发网络模型：多线程 Reactor（`epoll`）
-- RESP 协议支持：含 pipeline 场景
-- 存储与持久化：多类型内存存储 + WAL + Snapshot
-- 可观测能力：统计/调试命令与阶段性性能记录
-- 测试脚本：功能、性能、稳定性测试脚本持续完善
+- **网络层**：基于 `epoll`、`EventLoop` 与线程池的多线程 Reactor 架构
+- **协议层**：RESP 解析与序列化，支持半包/粘包与 pipeline 场景
+- **存储层**：`storage2` 统一实现，覆盖多数据类型与惰性过期语义
+- **持久化层**：WAL + Snapshot，并通过 `PersistenceOrchestrator` 进行恢复编排
+- **测试体系**：按模块分层组织（`client` / `network` / `protocol` / `server` / `storage2`）
+- **客户端能力**：提供同步 C++ SDK 及 CLI 工具 `sunkvClient`
 
 ## 构建与运行
 
-### 依赖要求
+### 环境依赖
 
 - Linux
 - CMake >= 3.10
-- GCC/Clang（支持 C++17）
+- GCC 或 Clang（支持 C++17）
+- `spdlog`、`fmt`、`Threads`
 
 ### 编译
 
 ```bash
 cd SunKV
-mkdir -p build
-cd build
-cmake ..
-cmake --build . -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(nproc)
 ```
 
-### 构建类型与压测建议
-
-- **Debug vs Release**
-  - **Release**（推荐用于压测/对比性能）：默认启用优化，性能数据更接近真实表现。
-  - **Debug**（推荐用于排障）：通常包含更多断言与更详细的日志，便于定位问题，但会显著影响性能。
-- **断言（assert）与 `-DNDEBUG`**
-  - 常见情况下 **Release 会启用 `-DNDEBUG`**，这会让 `assert(...)` 在编译期被移除。
-  - 因此某些仅靠断言暴露的生命周期/线程不变式问题，在 Release 可能不会“立即崩溃”，而会以更隐蔽的方式表现；排查此类问题建议优先用 Debug 构建复现。
-- **日志级别对性能的影响**
-  - Debug 级别下会产生大量日志（即使做了采样，仍可能影响延迟/QPS），压测建议使用 `--log-level INFO`（或更高）。
-
-### 启动
+### 启动服务端
 
 ```bash
 ./build/sunkv --port 6379
 ```
 
-可选参数（示例）：
+可选参数示例：
 
 ```bash
 ./build/sunkv --port 6379 --thread-pool-size 4 --max-connections 2000
 ```
 
-说明：
-- 日志默认写入 `./data/logs/sunkv.log`，并通过 rotating 机制自动滚动。
+## 客户端
 
-## 测试入口
+### CLI 用法
 
-- 功能测试（8.1）：`scripts/functional_suite.sh`
-- 性能与 profiling（8.2）：`scripts/perf_profile.sh`
-- 稳定性测试（8.3）：`scripts/stability_suite.sh`
+```bash
+# 单次命令模式
+./build/sunkvClient 127.0.0.1 6379 PING
 
-## 文档索引
+# 交互模式
+./build/sunkvClient 127.0.0.1 6379
+```
 
-- 总体计划：`doc/开发计划.md`
-- 架构设计：`doc/设计文档.md`
-- 接口说明：`doc/API文档.md`
-- 7.2 优化详记：`doc/7.2性能优化详细记录.md`
-- 8.2 过程记录：`doc/8.2性能测试记录.md`
-- 8.2 总览版：`doc/8.2性能优化总览.md`
-- 8.3 稳定性记录：`doc/8.3稳定性测试记录.md`
+### C++ SDK 能力（同步）
 
-## 项目目录（简版）
+- 连接管理：`connect()` / `close()` / `isConnected()`
+- 通用命令：`command(args)`（完整 RESP 响应解析）
+- 批量命令：`pipeline(commands)`（一次写入、顺序读取多响应）
+  - 支持严格模式（遇到服务端错误立即失败，并可选择关闭连接）
+- typed string 与管理命令：  
+  `ping/get/set/del/exists/keys/dbsize/flushall/stats/monitor/snapshot/health/debugInfo/debugResetStats`
+- typed TTL 命令：`expire/ttl/pttl/persist`
+- typed list 命令：`lpush/rpush/lpop/rpop/llen/lindex`
+- typed set 命令：`sadd/srem/scard/sismember/smembers`
+- typed hash 命令：`hset/hget/hdel/hlen/hexists/hgetall`
+- typed 批量封装：`mget/mset`
+
+客户端 API 详见：`doc/client_api.md`  
+头文件入口：
+
+- `client/include/Client.h`
+- `client/include/RespValue.h`
+- `client/include/Result.h`
+- `client/include/Error.h`
+
+## 测试
+
+建议按标签执行回归：
+
+```bash
+ctest --test-dir build -L client --output-on-failure
+ctest --test-dir build -L network --output-on-failure
+ctest --test-dir build -L protocol --output-on-failure
+ctest --test-dir build -L server --output-on-failure
+ctest --test-dir build -L storage2 --output-on-failure
+```
+
+## 版本与兼容性说明
+
+- **项目版本阶段**：当前仓库处于持续演进阶段，建议以主分支最新代码与对应测试结果作为行为基准。
+- **协议兼容性**：SunKV 采用 RESP 协议并兼容 Redis 风格命令交互，但并非 Redis 全量语义实现。
+- **命令兼容范围**：当前已覆盖 string/list/set/hash、TTL 及部分管理命令；未实现命令会返回标准错误响应。
+- **平台与工具链**：主要面向 Linux 环境，使用 C++17、CMake 构建；建议 GCC/Clang 的现代版本。
+- **稳定性建议**：生产或压测场景建议固定构建参数（如 `Release`）并配套回归测试标签执行结果使用。
+
+## 目录结构
 
 ```text
 SunKV/
-├── server/      # 服务端主流程
-├── network/     # 网络与事件循环
-├── protocol/    # RESP 解析/序列化
-├── storage/     # 存储引擎与数据结构
-├── common/      # 通用模块（配置、数据结构、内存池等）
-├── test/        # 测试与阶段脚本
-└── doc/         # 阶段记录与设计文档
+├── server/                 # 服务端主流程（命令分发、生命周期）
+├── network/                # 网络与事件循环
+├── protocol/               # RESP 解析与序列化
+├── storage2/               # 存储引擎、持久化与模型定义
+├── client/                 # 客户端 SDK 与 CLI
+├── common/                 # 配置、内存池等公共组件
+├── test/
+│   ├── client/
+│   ├── network/
+│   ├── protocol/
+│   ├── server/
+│   └── storage2/
+└── doc/                    # 设计说明与阶段记录
 ```
+
+## 说明
+
+- 项目当前以 `storage2` 为唯一主存储路径。
+- 性能压测建议使用 `Release` 构建，并适当降低日志级别以减少额外开销。

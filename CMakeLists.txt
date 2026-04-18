@@ -40,6 +40,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/protocol)            # 协议模
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/storage)            # 存储模块
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/persistence)        # 持久化模块
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/server)              # 服务器模块
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/client/include)      # 客户端 SDK 头文件
 
 # ============================================================================
 # 源文件定义
@@ -71,30 +72,39 @@ set(PROTOCOL_SOURCES
     protocol/RESPSerializer.cpp              # RESP 协议序列化器
 )
 
-# 命令模块源文件
-set(COMMAND_SOURCES
-    command/Command.cpp                   # 命令基类
-    command/CommandRegistry.cpp           # 命令注册表
-    command/CommandDispatcher.cpp         # 命令分发器
-)
-
 # 存储模块源文件
-set(STORAGE_SOURCES
-    storage/StorageEngine.cpp             # 存储引擎核心
-    storage/ShardedKVStore.cpp            # 分片 KV 存储
-    storage/WAL.cpp                        # 预写日志
-    storage/Snapshot.cpp                  # 快照管理
+
+# v2 存储模块（从零设计）源文件
+set(STORAGE2_SOURCES
+    storage2/Factory.cpp
+    storage2/backend/InMemoryBackend.cpp
+    storage2/engine/Time.cpp
+    storage2/engine/StorageEngine.cpp
+    storage2/persistence/PersistenceOrchestrator.cpp
+    storage2/persistence/DataValueCodec.cpp
+    storage2/persistence/RecordCodec.cpp
+    storage2/persistence/WalWriter.cpp
+    storage2/persistence/WalCodec.cpp
+    storage2/persistence/WalReader.cpp
+    storage2/persistence/SnapshotWriter.cpp
+    storage2/persistence/SnapshotReader.cpp
+    storage2/decorators/OrchestratedStorageAPI.cpp
 )
 
-# 持久化模块源文件
-set(PERSISTENCE_SOURCES
-    # 持久化层源文件将在这里添加
-)
+# storage2 实现库（主程序与 v2 测试均链接该库）。
+add_library(storage2lib STATIC ${STORAGE2_SOURCES})
 
 # 服务器模块源文件
 set(SERVER_SOURCES
     server/Server.cpp                      # 服务器主类
+    server/ArrayCmdDispatch.cpp            # RESP 数组命令静态分发表
     server/main.cpp                         # 服务器主程序入口
+)
+
+# 客户端模块源文件
+set(CLIENT_SOURCES
+    client/src/Client.cpp
+    client/src/RespCodec.cpp
 )
 
 # ============================================================================
@@ -106,8 +116,6 @@ add_executable(sunkv
     ${SERVER_SOURCES}                      # 服务器模块
     ${NETWORK_SOURCES}                     # 网络模块
     ${PROTOCOL_SOURCES}                    # 协议模块
-    ${COMMAND_SOURCES}                     # 命令模块
-    ${STORAGE_SOURCES}                     # 存储模块
     ${PERSISTENCE_SOURCES}                 # 持久化模块
     common/Config.cpp                      # 配置模块
 )
@@ -117,6 +125,20 @@ target_link_libraries(sunkv
     Threads::Threads                       # 线程库
     spdlog::spdlog                         # 日志库
     fmt::fmt                               # 格式化库
+    storage2lib                            # storage2 v2 存储实现
+)
+
+add_library(clientlib STATIC ${CLIENT_SOURCES})
+target_link_libraries(clientlib
+    Threads::Threads
+)
+
+add_executable(sunkvClient
+    client/sunkvClient.cpp
+)
+target_link_libraries(sunkvClient
+    clientlib
+    Threads::Threads
 )
 
 # ============================================================================
@@ -142,140 +164,322 @@ elseif(BUILD_TEST)
     # 如果没有 GTest 但启用了 BUILD_TEST，使用简单测试框架
     
     # ========================================================================
-    # 网络层测试
+    # client/
+    # ========================================================================
+
+    add_executable(client_resp_codec_test
+        test/client/client_resp_codec_test.cpp
+        client/src/RespCodec.cpp
+    )
+    target_link_libraries(client_resp_codec_test
+        Threads::Threads
+    )
+
+    add_executable(client_basic_integration_test
+        test/client/client_basic_integration_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(client_basic_integration_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+        clientlib
+    )
+
+    add_executable(client_pipeline_integration_test
+        test/client/client_pipeline_integration_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(client_pipeline_integration_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+        clientlib
+    )
+
+    # ========================================================================
+    # network/
     # ========================================================================
     
     # 定时器测试 - 验证定时器功能和精度
-    add_executable(timer_test test/timer_test.cpp
+    add_executable(network_timer_test test/network/network_timer_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(timer_test 
+    target_link_libraries(network_timer_test 
         Threads::Threads
         spdlog::spdlog
     )
     
     # 事件循环测试 - 验证事件循环核心功能
-    add_executable(eventloop_test test/eventloop_test.cpp
+    add_executable(network_event_loop_test test/network/network_event_loop_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(eventloop_test 
+    target_link_libraries(network_event_loop_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    # EventLoop queueInLoop 跨线程唤醒路径 - 验证队列能在 poll 阻塞时被及时执行
+    add_executable(network_event_loop_queue_in_loop_test
+        test/network/network_event_loop_queue_in_loop_test.cpp
+        ${NETWORK_SOURCES}
+    )
+    target_link_libraries(network_event_loop_queue_in_loop_test
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    # EventLoop reentrant 队列行为 - 验证 doPendingTasks 期间 queueInLoop 的次序
+    add_executable(network_event_loop_reentrant_queue_test
+        test/network/network_event_loop_reentrant_queue_test.cpp
+        ${NETWORK_SOURCES}
+    )
+    target_link_libraries(network_event_loop_reentrant_queue_test
         Threads::Threads
         spdlog::spdlog
     )
     
     # 网络基础测试 - 验证基础网络功能
-    add_executable(network_test test/network_test.cpp
+    add_executable(network_socket_basics_test test/network/network_socket_basics_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(network_test 
+    target_link_libraries(network_socket_basics_test 
         Threads::Threads
         spdlog::spdlog
     )
 
     # Buffer 优化测试 - 验证缓冲区复用与扩容行为
-    add_executable(buffer_optimization_test test/buffer_optimization_test.cpp
+    add_executable(network_buffer_growth_test test/network/network_buffer_growth_test.cpp
         common/MemoryPool.cpp
         network/Buffer.cpp
         network/logger.cpp
     )
-    target_link_libraries(buffer_optimization_test
+    target_link_libraries(network_buffer_growth_test
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    # Buffer fd 错误路径 - 验证非法 fd 的错误码回传
+    add_executable(network_buffer_fd_error_test
+        test/network/network_buffer_fd_error_test.cpp
+        common/MemoryPool.cpp
+        network/Buffer.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(network_buffer_fd_error_test
         Threads::Threads
         spdlog::spdlog
     )
 
     # 内存池测试 - 验证线程本地内存池分配与复用
-    add_executable(memory_pool_test test/memory_pool_test.cpp
+    add_executable(network_memory_pool_test test/network/network_memory_pool_test.cpp
         common/MemoryPool.cpp
     )
-    target_link_libraries(memory_pool_test
+    target_link_libraries(network_memory_pool_test
         Threads::Threads
         spdlog::spdlog
     )
     
-    # ========================================================================
-    # TCP 服务器测试
-    # ========================================================================
+    # network/（TCP 子集）
     
     # TCP 服务器基础测试
-    add_executable(tcp_server_test test/tcp_server_test.cpp
+    add_executable(network_tcp_server_test test/network/network_tcp_server_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(tcp_server_test 
+    target_link_libraries(network_tcp_server_test 
         Threads::Threads
         spdlog::spdlog
     )
 
     # epoll 边界事件回归测试 - 验证 FIN/半关闭/RST 等边界路径
-    add_executable(epoll_edge_cases_test test/epoll_edge_cases_test.cpp
+    add_executable(network_epoll_edge_cases_test test/network/network_epoll_edge_cases_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(epoll_edge_cases_test
+    target_link_libraries(network_epoll_edge_cases_test
         Threads::Threads
         spdlog::spdlog
     )
     
     # 多线程 TCP 测试 - 验证多线程环境下的 TCP 功能
-    add_executable(multithread_tcp_test test/multithread_tcp_test.cpp
+    add_executable(network_tcp_multithread_test test/network/network_tcp_multithread_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(multithread_tcp_test 
+    target_link_libraries(network_tcp_multithread_test 
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    add_executable(network_tcp_backpressure_test test/network/network_tcp_backpressure_test.cpp
+        ${NETWORK_SOURCES}
+    )
+    target_link_libraries(network_tcp_backpressure_test
+        Threads::Threads
+        spdlog::spdlog
+    )
+
+    add_executable(network_tcp_buffered_send_test test/network/network_tcp_buffered_send_test.cpp
+        ${NETWORK_SOURCES}
+    )
+    target_link_libraries(network_tcp_buffered_send_test
         Threads::Threads
         spdlog::spdlog
     )
     
-    # ========================================================================
-    # 性能和并发测试
-    # ========================================================================
+    # network/（并发与性能）
     
     # 并发连接测试 - 验证高并发连接处理能力
-    add_executable(concurrent_connection_test test/concurrent_connection_test.cpp
+    add_executable(network_concurrent_connections_test test/network/network_concurrent_connections_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(concurrent_connection_test 
+    target_link_libraries(network_concurrent_connections_test 
         Threads::Threads
         spdlog::spdlog
     )
     
     # 连接生命周期测试 - 验证连接建立、维护和关闭
-    add_executable(connection_lifecycle_test test/connection_lifecycle_test.cpp
+    add_executable(network_connection_lifecycle_test test/network/network_connection_lifecycle_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(connection_lifecycle_test 
+    target_link_libraries(network_connection_lifecycle_test 
         Threads::Threads
         spdlog::spdlog
     )
     
     # 性能基准测试 - 测试系统性能指标
-    add_executable(performance_benchmark_test test/performance_benchmark_test.cpp
+    add_executable(network_performance_benchmark_test test/network/network_performance_benchmark_test.cpp
         ${NETWORK_SOURCES}
     )
-    target_link_libraries(performance_benchmark_test 
+    target_link_libraries(network_performance_benchmark_test 
         Threads::Threads
         spdlog::spdlog
     )
     
     # ========================================================================
-    # RESP 协议测试
+    # protocol/
     # ========================================================================
     
     # RESP 协议测试 - 验证 RESP 协议解析和生成
-    add_executable(resp_protocol_test test/resp_protocol_test.cpp
+    add_executable(protocol_resp_parser_serializer_test test/protocol/protocol_resp_parser_serializer_test.cpp
         ${NETWORK_SOURCES}
         ${PROTOCOL_SOURCES}
     )
-    target_link_libraries(resp_protocol_test 
+    target_link_libraries(protocol_resp_parser_serializer_test 
         Threads::Threads
         spdlog::spdlog
     )
     
-    # RESP 网络集成测试 - 验证 RESP 协议在网络传输中的表现
-    add_executable(resp_network_integration_test test/resp_network_integration_test.cpp
+    # ========================================================================
+    # server/
+    # ========================================================================
+
+    # ========================================================================
+    # server/（真实 Server 行为回归）
+    # ========================================================================
+
+    add_executable(server_message_framing_integration_test
+        test/server/server_message_framing_integration_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
         ${NETWORK_SOURCES}
         ${PROTOCOL_SOURCES}
     )
-    target_link_libraries(resp_network_integration_test 
+    target_link_libraries(server_message_framing_integration_test
         Threads::Threads
         spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_error_paths_integration_test
+        test/server/server_error_paths_integration_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_error_paths_integration_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_connection_lifecycle_test
+        test/server/server_connection_lifecycle_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_connection_lifecycle_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_string_commands_test
+        test/server/server_string_commands_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_string_commands_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_collection_commands_test
+        test/server/server_collection_commands_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_collection_commands_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_ttl_and_debug_test
+        test/server/server_ttl_and_debug_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_ttl_and_debug_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_shutdown_integration_test
+        test/server/server_shutdown_integration_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_shutdown_integration_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
     )
     
     # RESP 简单测试 - 基础 RESP 功能测试（文件不存在，暂时注释）
@@ -288,217 +492,241 @@ elseif(BUILD_TEST)
     # )
     
     # RESP 管道测试 - 验证 RESP 协议管道功能
-    add_executable(resp_pipeline_test test/resp_pipeline_test.cpp
+    add_executable(protocol_resp_pipeline_test test/protocol/protocol_resp_pipeline_test.cpp
         ${PROTOCOL_SOURCES}
     )
-    target_link_libraries(resp_pipeline_test 
+    target_link_libraries(protocol_resp_pipeline_test 
         Threads::Threads
         spdlog::spdlog
     )
     
     # ========================================================================
-    # 命令模块测试
-    # ========================================================================
-    
-    # 命令框架测试 - 验证命令框架基础功能
-    add_executable(command_framework_test test/command_framework_test.cpp
-        ${PROTOCOL_SOURCES}
-        ${COMMAND_SOURCES}
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(command_framework_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # ========================================================================
-    # 测试目标注册
+    # 测试目标注册（按目录分层）
     # ========================================================================
     # 将所有测试注册到 CTest 框架中，可以通过 'make test' 或 'ctest' 运行
     
-    # 网络层测试目标
-    add_test(NAME TimerTest COMMAND timer_test)
-    add_test(NAME EventLoopTest COMMAND eventloop_test)
-    add_test(NAME NetworkTest COMMAND network_test)
-    add_test(NAME BufferOptimizationTest COMMAND buffer_optimization_test)
-    add_test(NAME MemoryPoolTest COMMAND memory_pool_test)
-    
-    # TCP 服务器测试目标
-    add_test(NAME TcpServerTest COMMAND tcp_server_test)
-    add_test(NAME EpollEdgeCasesTest COMMAND epoll_edge_cases_test)
-    add_test(NAME MultiThreadTcpTest COMMAND multithread_tcp_test)
-    
-    # 性能和并发测试目标
-    add_test(NAME ConcurrentConnectionTest COMMAND concurrent_connection_test)
-    add_test(NAME ConnectionLifecycleTest COMMAND connection_lifecycle_test)
-    add_test(NAME PerformanceBenchmarkTest COMMAND performance_benchmark_test)
-    
-    # RESP 协议测试目标
-    add_test(NAME RESPProtocolTest COMMAND resp_protocol_test)
-    add_test(NAME RESPNetworkIntegrationTest COMMAND resp_network_integration_test)
-    # add_test(NAME RESPSimpleTest COMMAND resp_simple_test)  # 文件不存在，暂时注释
-    add_test(NAME RESPPipelineTest COMMAND resp_pipeline_test)
-    
-    # 基础命令测试 - 验证基本 Redis 命令功能
-    add_executable(basic_commands_test test/basic_commands_test.cpp
-        ${PROTOCOL_SOURCES}
-        ${COMMAND_SOURCES}
-        ${STORAGE_SOURCES}
-        network/logger.cpp
+    # network/
+    add_test(NAME client_resp_codec COMMAND client_resp_codec_test)
+    add_test(NAME client_basic_integration COMMAND client_basic_integration_test)
+    add_test(NAME client_pipeline_integration COMMAND client_pipeline_integration_test)
+    set_tests_properties(
+        client_resp_codec
+        client_basic_integration
+        client_pipeline_integration
+        PROPERTIES LABELS "client"
     )
-    target_link_libraries(basic_commands_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 命令集成测试 - 验证命令系统的完整集成
-    add_executable(command_integration_test test/command_integration_test.cpp
-        ${PROTOCOL_SOURCES}
-        ${COMMAND_SOURCES}
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(command_integration_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 命令单元测试 - 验证各个命令的单元功能
-    add_executable(command_unit_test test/command_unit_test.cpp
-        ${PROTOCOL_SOURCES}
-        ${COMMAND_SOURCES}
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(command_unit_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 命令错误测试 - 验证命令错误处理机制
-    add_executable(command_error_test test/command_error_test.cpp
-        ${PROTOCOL_SOURCES}
-        ${COMMAND_SOURCES}
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(command_error_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # ========================================================================
-    # 存储模块测试
-    # ========================================================================
-    
-    # 分片 KV 存储测试 - 验证分片存储功能
-    add_executable(sharded_kvstore_test test/sharded_kvstore_test.cpp
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(sharded_kvstore_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 缓存存储测试 - 验证缓存层功能
-    add_executable(cached_storage_test test/cached_storage_test.cpp
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(cached_storage_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 存储引擎测试 - 验证存储引擎核心功能
-    add_executable(storage_engine_test test/storage_engine_test.cpp
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(storage_engine_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # ========================================================================
-    # 持久化模块测试
-    # ========================================================================
-    
-    # WAL 测试 - 验证预写日志功能
-    add_executable(wal_test test/wal_test.cpp
-        storage/WAL.cpp
-        ${STORAGE_SOURCES}
-        network/logger.cpp
-    )
-    target_link_libraries(wal_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 快照测试 - 验证数据快照功能（文件不存在，暂时注释）
-    # add_executable(snapshot_test test/snapshot_test.cpp
-    #     storage/Snapshot.cpp
-    #     storage/StorageEngine.cpp
-    #     storage/ShardedKVStore.cpp
-    #     network/logger.cpp
-    # )
-    # target_link_libraries(snapshot_test 
-    #     Threads::Threads
-    #     spdlog::spdlog
-    # )
-    
-    # 数据恢复测试 - 验证数据恢复功能
-    add_executable(recovery_test test/recovery_test.cpp
-        storage/Recovery.cpp
-        storage/Snapshot.cpp
-        storage/WAL.cpp
-        storage/StorageEngine.cpp
-        storage/ShardedKVStore.cpp
-        network/logger.cpp
-    )
-    target_link_libraries(recovery_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # 持久化集成测试 - 验证持久化系统完整功能
-    add_executable(persistence_test test/persistence_test.cpp
-        storage/Recovery.cpp
-        storage/Snapshot.cpp
-        storage/WAL.cpp
-        storage/StorageEngine.cpp
-        storage/ShardedKVStore.cpp
-        network/logger.cpp
-    )
-    target_link_libraries(persistence_test 
-        Threads::Threads
-        spdlog::spdlog
-    )
-    
-    # ========================================================================
-    # 完整测试目标注册
-    # ========================================================================
-    
-    # 命令模块测试目标
-    add_test(NAME BasicCommandsTest COMMAND basic_commands_test)
-    add_test(NAME CommandIntegrationTest COMMAND command_integration_test)
-    add_test(NAME CommandUnitTest COMMAND command_unit_test)
-    add_test(NAME CommandErrorTest COMMAND command_error_test)
-    
-    # 存储模块测试目标
-    add_test(NAME ShardedKVStoreTest COMMAND sharded_kvstore_test)
-    add_test(NAME CachedStorageTest COMMAND cached_storage_test)
-    add_test(NAME StorageEngineTest COMMAND storage_engine_test)
-    
-    # 持久化模块测试目标
-    add_test(NAME WALTest COMMAND wal_test)
-    # add_test(NAME SnapshotTest COMMAND snapshot_test)  # 文件不存在，暂时注释
-    add_test(NAME RecoveryTest COMMAND recovery_test)
-    add_test(NAME PersistenceTest COMMAND persistence_test)
 
+    # network/
+    add_test(NAME network_timer COMMAND network_timer_test)
+    add_test(NAME network_event_loop COMMAND network_event_loop_test)
+    add_test(NAME network_event_loop_queue_in_loop COMMAND network_event_loop_queue_in_loop_test)
+    add_test(NAME network_event_loop_reentrant_queue COMMAND network_event_loop_reentrant_queue_test)
+    add_test(NAME network_socket_basics COMMAND network_socket_basics_test)
+    add_test(NAME network_buffer_growth COMMAND network_buffer_growth_test)
+    add_test(NAME network_buffer_fd_error COMMAND network_buffer_fd_error_test)
+    add_test(NAME network_memory_pool COMMAND network_memory_pool_test)
+    
+    # network/（TCP 子集）
+    add_test(NAME network_tcp_server COMMAND network_tcp_server_test)
+    add_test(NAME network_epoll_edge_cases COMMAND network_epoll_edge_cases_test)
+    add_test(NAME network_tcp_multithread COMMAND network_tcp_multithread_test)
+    add_test(NAME network_tcp_backpressure COMMAND network_tcp_backpressure_test)
+    add_test(NAME network_tcp_buffered_send COMMAND network_tcp_buffered_send_test)
+    
+    # network/（并发与性能）
+    add_test(NAME network_concurrent_connections COMMAND network_concurrent_connections_test)
+    add_test(NAME network_connection_lifecycle COMMAND network_connection_lifecycle_test)
+    add_test(NAME network_performance_benchmark COMMAND network_performance_benchmark_test)
+    set_tests_properties(
+        network_timer
+        network_event_loop
+        network_event_loop_queue_in_loop
+        network_event_loop_reentrant_queue
+        network_socket_basics
+        network_buffer_growth
+        network_buffer_fd_error
+        network_memory_pool
+        network_tcp_server
+        network_epoll_edge_cases
+        network_tcp_multithread
+        network_tcp_backpressure
+        network_tcp_buffered_send
+        network_concurrent_connections
+        network_connection_lifecycle
+        network_performance_benchmark
+        PROPERTIES LABELS "network"
+    )
+    
+    # protocol/
+    add_test(NAME protocol_resp_parser_serializer COMMAND protocol_resp_parser_serializer_test)
+    add_test(NAME protocol_resp_pipeline COMMAND protocol_resp_pipeline_test)
+    set_tests_properties(
+        protocol_resp_parser_serializer
+        protocol_resp_pipeline
+        PROPERTIES LABELS "protocol"
+    )
+
+    # server/
+    add_test(NAME server_message_framing_integration COMMAND server_message_framing_integration_test)
+    add_test(NAME server_error_paths_integration COMMAND server_error_paths_integration_test)
+    add_test(NAME server_connection_lifecycle COMMAND server_connection_lifecycle_test)
+    add_test(NAME server_string_commands COMMAND server_string_commands_test)
+    add_test(NAME server_collection_commands COMMAND server_collection_commands_test)
+    add_test(NAME server_ttl_and_debug COMMAND server_ttl_and_debug_test)
+    add_test(NAME server_shutdown_integration COMMAND server_shutdown_integration_test)
+    set_tests_properties(
+        server_message_framing_integration
+        server_error_paths_integration
+        server_connection_lifecycle
+        server_string_commands
+        server_collection_commands
+        server_ttl_and_debug
+        server_shutdown_integration
+        PROPERTIES LABELS "server"
+    )
+    # ========================================================================
+    # storage2/
+    # ========================================================================
+
+    # storage2 smoke test：验证 v2 骨架可编译/可运行
+    add_executable(storage2_smoke_test
+        test/storage2/storage2_smoke_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_smoke_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_smoke COMMAND storage2_smoke_test)
+
+    # storage2 multitype ops test：验证 list/set/hash 的命令语义骨架
+    add_executable(storage2_multitype_commands_test
+        test/storage2/storage2_multitype_commands_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_multitype_commands_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_multitype_commands COMMAND storage2_multitype_commands_test)
+
+    add_executable(storage2_persistence_cycle_test
+        test/storage2/storage2_persistence_cycle_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_persistence_cycle_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_persistence_cycle COMMAND storage2_persistence_cycle_test)
+
+    add_executable(storage2_recovery_orchestrator_test
+        test/storage2/storage2_recovery_orchestrator_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_recovery_orchestrator_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_recovery_orchestrator COMMAND storage2_recovery_orchestrator_test)
+
+    add_executable(storage2_wal_roundtrip_test
+        test/storage2/storage2_wal_roundtrip_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_wal_roundtrip_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_wal_roundtrip COMMAND storage2_wal_roundtrip_test)
+
+    add_executable(storage2_wal_truncation_test
+        test/storage2/storage2_wal_truncation_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_wal_truncation_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_wal_truncation COMMAND storage2_wal_truncation_test)
+
+    add_executable(storage2_factory_wiring_test
+        test/storage2/storage2_factory_wiring_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_factory_wiring_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_factory_wiring COMMAND storage2_factory_wiring_test)
+
+    add_executable(storage2_ttl_lazy_expiry_semantics_test
+        test/storage2/storage2_ttl_lazy_expiry_semantics_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_ttl_lazy_expiry_semantics_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_ttl_lazy_expiry_semantics COMMAND storage2_ttl_lazy_expiry_semantics_test)
+
+    add_executable(storage2_pttl_boundary_test
+        test/storage2/storage2_pttl_boundary_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_pttl_boundary_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_pttl_boundary COMMAND storage2_pttl_boundary_test)
+
+    add_executable(storage2_dump_live_records_test
+        test/storage2/storage2_dump_live_records_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_dump_live_records_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_dump_live_records COMMAND storage2_dump_live_records_test)
+
+    add_executable(storage2_recover_precedence_idempotence_test
+        test/storage2/storage2_recover_precedence_idempotence_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_recover_precedence_idempotence_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_recover_precedence_idempotence COMMAND storage2_recover_precedence_idempotence_test)
+    set_tests_properties(
+        storage2_smoke
+        storage2_multitype_commands
+        storage2_persistence_cycle
+        storage2_recovery_orchestrator
+        storage2_wal_roundtrip
+        storage2_wal_truncation
+        storage2_factory_wiring
+        storage2_ttl_lazy_expiry_semantics
+        storage2_pttl_boundary
+        storage2_dump_live_records
+        storage2_recover_precedence_idempotence
+        PROPERTIES LABELS "storage2"
+    )
+    
     # 防止运行期代码出现 stdout/stderr 双轨日志
     add_test(NAME NoStdioRuntimeTest COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/no_stdio_runtime_check.sh")
+    set_tests_properties(NoStdioRuntimeTest PROPERTIES LABELS "server")
     
 endif()
