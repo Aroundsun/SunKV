@@ -87,6 +87,9 @@ public:
      * @brief 检查服务器是否停止
      */
     bool isStopping() const { return stopping_.load(); }
+
+    /// EXPIRE 等命令使用的最大 TTL（秒）
+    int maxTtlSeconds() const { return config_.max_ttl_seconds; }
     
     /**
      * @brief 停止主事件循环（用于信号处理）
@@ -120,10 +123,7 @@ private:
      */
     bool create_multi_type_snapshot();
     
-    /**
-     * @brief 初始化命令系统
-     */
-    bool initializeCommands();
+
     
     /**
      * @brief 设置连接回调
@@ -174,6 +174,9 @@ private:
      * @brief 周期统计日志线程函数
      */
     void statsReportThread();
+
+    /// 周期性快照（enable_snapshot 且 snapshot_interval_seconds>0）
+    void snapshotIntervalThread();
     
     /**
      * @brief 构建统计信息文本
@@ -207,7 +210,9 @@ private:
     // TTL 清理相关
     std::thread ttl_cleanup_thread_;                  // TTL 清理线程
     std::atomic<bool> ttl_cleanup_running_{false};     // TTL 清理线程运行状态
-    static constexpr int TTL_CLEANUP_INTERVAL_SECONDS = 5;  // 清理间隔（秒）
+
+    std::thread snapshot_interval_thread_;
+    std::atomic<bool> snapshot_interval_running_{false};
     
     // 统计输出线程
     std::thread stats_report_thread_;

@@ -16,6 +16,7 @@ public:
     std::string data_dir = "./data";
     std::string wal_dir = "./data/wal";
     std::string snapshot_dir = "./data/snapshot";
+    /// 0 表示不限制存储估算用量
     int max_memory_mb = 1024;
     
     // 持久化配置
@@ -24,6 +25,16 @@ public:
     int snapshot_interval_seconds = 3600;  // 1小时
     int wal_sync_interval_ms = 100;        // 100ms
     int max_wal_file_size_mb = 100;
+
+    /// WAL 异步提交（false 则同步写 WAL 并同步回调 consumers）
+    bool wal_async = true;
+    /// 异步队列上限（条数为 MutationBatch 个数）
+    int wal_max_queue = 100000;
+    /// never | always | periodic（与 PersistenceOrchestrator::WalFlushPolicy 对应）
+    std::string wal_flush_policy = "periodic";
+    int wal_group_commit_linger_ms = 2;
+    int wal_group_commit_max_mutations = 8192;
+    int wal_group_commit_max_bytes = 2097152;
     
     // 日志配置
     std::string log_level = "INFO";
@@ -44,6 +55,11 @@ public:
     int tcp_keepalive_seconds = 300;
     int tcp_send_buffer_size = 65536;
     int tcp_recv_buffer_size = 65536;
+
+    /// 单连接 RESP 输入累积上限（MB）
+    int max_conn_input_buffer_mb = 8;
+    /// ThreadLocalBufferPool：每种尺寸最多缓存块数
+    int memory_pool_max_cached_blocks_per_size = 8;
     
     // 单例模式
     static Config& getInstance();

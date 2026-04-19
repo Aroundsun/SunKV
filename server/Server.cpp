@@ -16,7 +16,31 @@
 #include "../protocol/RESPSerializer.h"
 #include "../protocol/RESPParser.h"
 #include "../storage2/Factory.h"
+#include "../storage2/persistence/PersistenceOrchestrator.h"
 #include "../storage2/persistence/SnapshotWriter.h"
+
+namespace {
+
+static sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy parseWalFlushPolicyString(const std::string& raw) {
+    std::string s = raw;
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
+        s.erase(s.begin());
+    }
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
+        s.pop_back();
+    }
+    if (s == "never") {
+        return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Never;
+    }
+    if (s == "always") {
+        return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Always;
+    }
+    return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Periodic;
+}
+
+} // namespace
 
 // 全局服务器实例，用于信号处理
 static Server* g_server = nullptr;
@@ -90,8 +114,9 @@ bool Server::start() {
         LOG_ERROR("存储初始化失败");
         return false;
     }
-    
 
+    ThreadLocalBufferPool::instance().setMaxCachedBlocksPerSize(
+        static_cast<size_t>(std::max(1, config_.memory_pool_max_cached_blocks_per_size)));
     
     if (!initializeNetwork()) {
         LOG_ERROR("网络初始化失败");
@@ -109,6 +134,14 @@ bool Server::start() {
     if (config_.enable_periodic_stats_log) {
         stats_report_running_.store(true);
         stats_report_thread_ = std::thread(&Server::statsReportThread, this);
+    }
+
+    ttl_cleanup_running_.store(true);
+    ttl_cleanup_thread_ = std::thread(&Server::ttlCleanupThread, this);
+
+    if (config_.enable_snapshot && config_.snapshot_interval_seconds > 0) {
+        snapshot_interval_running_.store(true);
+        snapshot_interval_thread_ = std::thread(&Server::snapshotIntervalThread, this);
     }
     
     // 启动信号转发线程：从管道读取信号通知，再在普通线程上下文中触发停止
@@ -194,6 +227,11 @@ void Server::stop() {
     if (ttl_cleanup_thread_.joinable()) {
         ttl_cleanup_thread_.join();
     }
+
+        snapshot_interval_running_.store(false);
+        if (snapshot_interval_thread_.joinable()) {
+            snapshot_interval_thread_.join();
+        }
     
         // 停止周期统计线程
         stats_report_running_.store(false);
@@ -251,6 +289,12 @@ bool Server::initializeNetwork() {
         
         // 线程池统一由 TcpServer 内部管理，这里仅透传线程数配置
         tcp_server_->setThreadNum(config_.thread_pool_size);
+        tcp_server_->setMaxConnections(config_.max_connections);
+        TcpSocketTuningOptions sock_tune;
+        sock_tune.send_buffer_size = config_.tcp_send_buffer_size;
+        sock_tune.recv_buffer_size = config_.tcp_recv_buffer_size;
+        sock_tune.tcp_keepalive_idle_seconds = config_.tcp_keepalive_seconds;
+        tcp_server_->setConnectionSocketTuning(sock_tune);
         
         LOG_INFO("连接配置: max_connections={}, thread_pool_size={}", config_.max_connections, config_.thread_pool_size);
         LOG_INFO("网络初始化成功");
@@ -266,12 +310,23 @@ bool Server::initializeStorage() {
         // v2：使用 storage2::Factory 组装（Engine + 可选持久化 + 可选装饰器）
         sunkv::storage2::Storage2WiringOptions opt;
 
+        opt.max_storage_bytes = config_.max_memory_mb <= 0
+                                    ? 0u
+                                    : static_cast<size_t>(config_.max_memory_mb) * 1024u * 1024u;
+
         // persistence
         opt.enable_wal = config_.enable_wal;
         opt.snapshot_path = config_.snapshot_dir + "/snapshot2.bin";
         opt.wal_path = config_.wal_dir + "/wal2.bin";
-        opt.wal_flush_policy = sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Periodic;
+        opt.wal_flush_policy = parseWalFlushPolicyString(config_.wal_flush_policy);
         opt.wal_flush_interval_ms = config_.wal_sync_interval_ms;
+        opt.wal_async = config_.wal_async;
+        opt.wal_max_queue = config_.wal_max_queue <= 0 ? 1u : static_cast<size_t>(config_.wal_max_queue);
+        opt.wal_group_commit_linger_ms = config_.wal_group_commit_linger_ms;
+        opt.wal_group_commit_max_mutations =
+            static_cast<size_t>(std::max(1, config_.wal_group_commit_max_mutations));
+        opt.wal_group_commit_max_bytes = static_cast<size_t>(std::max(1, config_.wal_group_commit_max_bytes));
+        opt.max_wal_file_size_mb = config_.max_wal_file_size_mb;
 
         // 确保存储目录存在
         std::filesystem::create_directories(config_.wal_dir);
@@ -388,7 +443,8 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         ctx->pending_input.append(chunk);
 
         // 防御：避免恶意/异常客户端持续喂垃圾导致内存膨胀
-        constexpr size_t kMaxConnInbufBytes = 8u * 1024u * 1024u; // 8MB
+        const size_t kMaxConnInbufBytes =
+            static_cast<size_t>(std::max(1, config_.max_conn_input_buffer_mb)) * 1024u * 1024u;
         if (ctx->pending_input.size() > kMaxConnInbufBytes) {
             auto error_resp = RESPSerializer::serializeError("Input buffer overflow");
             conn->send(error_resp.data(), error_resp.size());
@@ -523,6 +579,22 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
     }
 }
 
+void Server::snapshotIntervalThread() {
+    while (snapshot_interval_running_.load()) {
+        const int sec = std::max(1, config_.snapshot_interval_seconds);
+        std::this_thread::sleep_for(std::chrono::seconds(sec));
+        if (!snapshot_interval_running_.load()) {
+            break;
+        }
+        if (!config_.enable_snapshot) {
+            continue;
+        }
+        if (!create_multi_type_snapshot()) {
+            LOG_WARN("周期性快照写入失败（将继续重试）");
+        }
+    }
+}
+
 void Server::ttlCleanupThread() {
     
     while (ttl_cleanup_running_) {
@@ -532,8 +604,8 @@ void Server::ttlCleanupThread() {
             LOG_ERROR("TTL 清理线程异常: {}", e.what());
         }
         
-        // 每5秒清理一次
-        std::this_thread::sleep_for(std::chrono::seconds(TTL_CLEANUP_INTERVAL_SECONDS));
+        const int interval = std::max(1, config_.ttl_cleanup_interval_seconds);
+        std::this_thread::sleep_for(std::chrono::seconds(interval));
     }
     
 }

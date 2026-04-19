@@ -8,8 +8,9 @@
 
 class EventLoop;
 class Acceptor;
-class TcpConnection;
 class EventLoopThreadPool;
+
+#include "TcpConnection.h"
 
 // TCP 服务器类
 class TcpServer {
@@ -41,6 +42,10 @@ public:
     
     // 设置线程数量
     void setThreadNum(int numThreads);
+
+    /// 0 表示不限制并发连接数
+    void setMaxConnections(int max_connections);
+    void setConnectionSocketTuning(const TcpSocketTuningOptions& tuning);
     
     // 获取服务器信息
     const std::string& name() const { return name_; }
@@ -58,22 +63,25 @@ private:
     void removeConnection(const std::shared_ptr<TcpConnection>& conn);
     void removeConnectionInLoop(const std::shared_ptr<TcpConnection>& conn);
     
-    EventLoop* loop_;
+    EventLoop* loop_;  // 事件循环  
     const std::string name_;
-    const std::string listenAddr_;
-    const uint16_t listenPort_;
+    const std::string listenAddr_;  // 监听地址
+    const uint16_t listenPort_;  // 监听端口
     
-    std::unique_ptr<Acceptor> acceptor_;
-    std::unique_ptr<EventLoopThreadPool> threadPool_;
+    std::unique_ptr<Acceptor> acceptor_;  // 接受器
+    std::unique_ptr<EventLoopThreadPool> threadPool_;  // 事件循环线程池
+      
+    std::atomic<bool> started_;  // 是否启动
+    int nextConnId_;  // 下一个连接 ID
+    std::unordered_map<std::string, std::shared_ptr<TcpConnection>> connections_;  // 连接映射
     
-    std::atomic<bool> started_;
-    int nextConnId_;
-    std::unordered_map<std::string, std::shared_ptr<TcpConnection>> connections_;
+    std::function<void(const std::shared_ptr<TcpConnection>&)> connectionCallback_;  // 连接回调
+    std::function<void(const std::shared_ptr<TcpConnection>&, void*, size_t)> messageCallback_;  // 消息回调
+    std::function<void(const std::shared_ptr<TcpConnection>&)> writeCompleteCallback_;  // 写完成回调
+    ThreadInitCallback threadInitCallback_;  // 线程初始化回调
+
+    int max_connections_{0};
+    TcpSocketTuningOptions conn_tuning_{};
     
-    std::function<void(const std::shared_ptr<TcpConnection>&)> connectionCallback_;
-    std::function<void(const std::shared_ptr<TcpConnection>&, void*, size_t)> messageCallback_;
-    std::function<void(const std::shared_ptr<TcpConnection>&)> writeCompleteCallback_;
-    ThreadInitCallback threadInitCallback_;
-    
-    static std::atomic<int> s_numCreated_;
+    static std::atomic<int> s_numCreated_;  // 创建的连接数
 };

@@ -98,6 +98,34 @@ void Socket::setTcpNoDelay(bool on) {
     ::setsockopt(sockfd_, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
 }
 
+void Socket::setSendBufferSize(int bytes) {
+    if (bytes <= 0) return;
+    int v = bytes;
+    if (::setsockopt(sockfd_, SOL_SOCKET, SO_SNDBUF, &v, sizeof(v)) < 0) {
+        LOG_WARN("SO_SNDBUF 设置失败: {}", strerror(errno));
+    }
+}
+
+void Socket::setRecvBufferSize(int bytes) {
+    if (bytes <= 0) return;
+    int v = bytes;
+    if (::setsockopt(sockfd_, SOL_SOCKET, SO_RCVBUF, &v, sizeof(v)) < 0) {
+        LOG_WARN("SO_RCVBUF 设置失败: {}", strerror(errno));
+    }
+}
+
+void Socket::setTcpKeepAliveIdleSeconds(int seconds) {
+    if (seconds <= 0) return;
+#if defined(TCP_KEEPIDLE)
+    int v = seconds;
+    if (::setsockopt(sockfd_, IPPROTO_TCP, TCP_KEEPIDLE, &v, sizeof(v)) < 0) {
+        LOG_WARN("TCP_KEEPIDLE 设置失败: {}", strerror(errno));
+    }
+#else
+    (void)seconds;
+#endif
+}
+
 std::string Socket::getLocalAddress() const {
     struct sockaddr_in localAddr;
     socklen_t addrLen = sizeof(localAddr);

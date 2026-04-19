@@ -63,7 +63,7 @@ bool SnapshotReader::loadFromFile(IBackend& backend, const std::string& path) {
         if (!readBytes(in, rb_len, &rb)) return false;
         Record r;
         if (!RecordCodec::decode(rb, &r)) return false;
-        backend.putRecord(key, r);
+        if (!backend.putRecord(key, r)) return false;
     }
     return true;
 }

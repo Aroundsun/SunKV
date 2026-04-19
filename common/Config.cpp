@@ -107,6 +107,24 @@ static const std::vector<OptionSpec>& specs() {
         {"max_wal_file_size_mb", "persistence", "--max-wal-file-size-mb", ValueType::Int, "100", "Max WAL file size (MB)",
             [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_wal_file_size_mb = x; return true; },
             [](const Config& c) { return std::to_string(c.max_wal_file_size_mb); }},
+        {"wal_async", "persistence", "--wal-async", ValueType::Bool, "true", "Async WAL submit queue",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.wal_async = b; return true; },
+            [](const Config& c) { return c.wal_async ? "true" : "false"; }},
+        {"wal_max_queue", "persistence", "--wal-max-queue", ValueType::Int, "100000", "Max WAL async queue depth (batches)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.wal_max_queue = x; return true; },
+            [](const Config& c) { return std::to_string(c.wal_max_queue); }},
+        {"wal_flush_policy", "persistence", "--wal-flush-policy", ValueType::String, "periodic", "never|always|periodic",
+            [](Config& c, const std::string& v) { c.wal_flush_policy = v; return true; },
+            [](const Config& c) { return c.wal_flush_policy; }},
+        {"wal_group_commit_linger_ms", "persistence", "--wal-group-commit-linger-ms", ValueType::Int, "2", "WAL group commit linger (ms)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.wal_group_commit_linger_ms = x; return true; },
+            [](const Config& c) { return std::to_string(c.wal_group_commit_linger_ms); }},
+        {"wal_group_commit_max_mutations", "persistence", "--wal-group-commit-max-mutations", ValueType::Int, "8192", "WAL group max mutations per write",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.wal_group_commit_max_mutations = x; return true; },
+            [](const Config& c) { return std::to_string(c.wal_group_commit_max_mutations); }},
+        {"wal_group_commit_max_bytes", "persistence", "--wal-group-commit-max-bytes", ValueType::Int, "2097152", "WAL group max encoded bytes per write",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.wal_group_commit_max_bytes = x; return true; },
+            [](const Config& c) { return std::to_string(c.wal_group_commit_max_bytes); }},
 
         // logging
         {"log_level", "logging", "--log-level", ValueType::String, "INFO", "DEBUG|INFO|WARN|ERROR (Debug 构建未指定时默认为 DEBUG)",
@@ -146,6 +164,13 @@ static const std::vector<OptionSpec>& specs() {
         {"tcp_recv_buffer_size", "performance", "--tcp-recv-buffer-size", ValueType::Int, "65536", "TCP recv buffer size (bytes)",
             [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.tcp_recv_buffer_size = x; return true; },
             [](const Config& c) { return std::to_string(c.tcp_recv_buffer_size); }},
+        {"max_conn_input_buffer_mb", "performance", "--max-conn-input-buffer-mb", ValueType::Int, "8", "Per-connection input buffer cap (MB)",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.max_conn_input_buffer_mb = x; return true; },
+            [](const Config& c) { return std::to_string(c.max_conn_input_buffer_mb); }},
+        {"memory_pool_max_cached_blocks_per_size", "performance", "--memory-pool-max-cached-blocks-per-size", ValueType::Int, "8",
+            "ThreadLocalBufferPool max cached blocks per size class",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.memory_pool_max_cached_blocks_per_size = x; return true; },
+            [](const Config& c) { return std::to_string(c.memory_pool_max_cached_blocks_per_size); }},
     };
     return k;
 }
@@ -367,8 +392,8 @@ bool Config::validate() const {
         valid = false;
     }
     
-    if (max_connections <= 0) {
-        LOG_ERROR("Invalid max_connections: {}", max_connections);
+    if (max_connections < 0) {
+        LOG_ERROR("Invalid max_connections: {} (use 0 for unlimited)", max_connections);
         valid = false;
     }
     
@@ -377,8 +402,8 @@ bool Config::validate() const {
         valid = false;
     }
     
-    if (max_memory_mb <= 0) {
-        LOG_ERROR("Invalid max_memory_mb: {}", max_memory_mb);
+    if (max_memory_mb < 0) {
+        LOG_ERROR("Invalid max_memory_mb: {} (use 0 for unlimited)", max_memory_mb);
         valid = false;
     }
     
@@ -389,6 +414,50 @@ bool Config::validate() const {
     
     if (enable_periodic_stats_log && stats_log_interval_seconds <= 0) {
         LOG_ERROR("Invalid stats_log_interval_seconds: {}", stats_log_interval_seconds);
+        valid = false;
+    }
+
+    if (ttl_cleanup_interval_seconds <= 0) {
+        LOG_ERROR("Invalid ttl_cleanup_interval_seconds: {}", ttl_cleanup_interval_seconds);
+        valid = false;
+    }
+    if (max_ttl_seconds <= 0) {
+        LOG_ERROR("Invalid max_ttl_seconds: {}", max_ttl_seconds);
+        valid = false;
+    }
+    if (wal_max_queue < 0) {
+        LOG_ERROR("Invalid wal_max_queue: {}", wal_max_queue);
+        valid = false;
+    }
+    if (wal_group_commit_linger_ms < 0) {
+        LOG_ERROR("Invalid wal_group_commit_linger_ms: {}", wal_group_commit_linger_ms);
+        valid = false;
+    }
+    if (wal_group_commit_max_mutations <= 0) {
+        LOG_ERROR("Invalid wal_group_commit_max_mutations: {}", wal_group_commit_max_mutations);
+        valid = false;
+    }
+    if (wal_group_commit_max_bytes <= 0) {
+        LOG_ERROR("Invalid wal_group_commit_max_bytes: {}", wal_group_commit_max_bytes);
+        valid = false;
+    }
+    if (max_wal_file_size_mb < 0) {
+        LOG_ERROR("Invalid max_wal_file_size_mb: {}", max_wal_file_size_mb);
+        valid = false;
+    }
+    {
+        std::string p = lower(trim(wal_flush_policy));
+        if (p != "never" && p != "always" && p != "periodic") {
+            LOG_ERROR("Invalid wal_flush_policy: {} (never|always|periodic)", wal_flush_policy);
+            valid = false;
+        }
+    }
+    if (max_conn_input_buffer_mb <= 0) {
+        LOG_ERROR("Invalid max_conn_input_buffer_mb: {}", max_conn_input_buffer_mb);
+        valid = false;
+    }
+    if (memory_pool_max_cached_blocks_per_size <= 0) {
+        LOG_ERROR("Invalid memory_pool_max_cached_blocks_per_size: {}", memory_pool_max_cached_blocks_per_size);
         valid = false;
     }
     

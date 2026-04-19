@@ -18,6 +18,9 @@ public:
     bool readAll(std::vector<MutationBatch>* out);
     bool readAllMutations(std::vector<Mutation>* out);
 
+    /// 按时间顺序回放主 WAL 及其滚动归档（`<path>.<N>`），用于恢复。
+    static bool readAllMutationsWalChain(const std::string& primary_path, std::vector<Mutation>* out);
+
     struct ReadStats {
         size_t file_bytes{0};
         size_t decoded_mutations{0};

@@ -11,7 +11,8 @@ class WalWriter final {
 public:
     static constexpr uint8_t kVersion = 1;
 
-    explicit WalWriter(std::string path);
+    /// max_file_bytes==0 表示不限制、不滚动 WAL 文件
+    explicit WalWriter(std::string path, size_t max_file_bytes = 0);
     ~WalWriter();
 
     WalWriter(const WalWriter&) = delete;
@@ -22,9 +23,11 @@ public:
     void flush();
 
 private:
+    bool rotate_();
+
     std::string path_;
+    size_t max_file_bytes_{0};
     int fd_{-1};
 };
 
 } // namespace sunkv::storage2
-

@@ -26,6 +26,7 @@ class StorageEngine;
 // 当前阶段仅提供“接收与回调”能力，便于后续逐步接入真实 IO。
 class PersistenceOrchestrator final {
 public:
+    // 选项
     struct Options {
         bool async{true};
         // 异步队列上限：达到上限时 submit 会阻塞等待（背压），不再静默丢弃。
@@ -50,6 +51,9 @@ public:
         int64_t wal_group_commit_linger_ms{2};
         size_t wal_group_commit_max_mutations{8192};
         size_t wal_group_commit_max_bytes{2 * 1024 * 1024};
+
+        /// WAL 单文件上限（MB），0 表示不滚动
+        int max_wal_file_size_mb{0};
 
         // 可选：恢复时使用的快照路径（若不存在/为空则跳过）
         std::string snapshot_path{};

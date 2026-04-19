@@ -60,6 +60,14 @@ void TcpServer::setThreadNum(int numThreads) {
     threadPool_->setThreadNum(numThreads);
 }
 
+void TcpServer::setMaxConnections(int max_connections) {
+    max_connections_ = max_connections < 0 ? 0 : max_connections;
+}
+
+void TcpServer::setConnectionSocketTuning(const TcpSocketTuningOptions& tuning) {
+    conn_tuning_ = tuning;
+}
+
 void TcpServer::start() {
     if (!started_.exchange(true)) {
         if (threadPool_) {
@@ -76,6 +84,12 @@ void TcpServer::start() {
 
 void TcpServer::newConnection(int sockfd, const std::string& localAddr, const std::string& peerAddr) {
     loop_->assertInLoopThread();
+
+    if (max_connections_ > 0 && connections_.size() >= static_cast<size_t>(max_connections_)) {
+        ::close(sockfd);
+        LOG_WARN("TcpServer::newConnection [{}] 拒绝新连接：已达上限 max_connections={}", name_, max_connections_);
+        return;
+    }
     
     char buf[64];
     snprintf(buf, sizeof(buf), "#%d", nextConnId_);
@@ -88,6 +102,7 @@ void TcpServer::newConnection(int sockfd, const std::string& localAddr, const st
     // 从线程池中选择一个 EventLoop
     EventLoop* ioLoop = threadPool_->getNextLoop();
     TcpConnectionPtr conn = std::make_shared<TcpConnection>(ioLoop, connName, sockfd, localAddr, peerAddr);
+    conn->setSocketTuningOptions(conn_tuning_);
     
     connections_[connName] = conn;
     
