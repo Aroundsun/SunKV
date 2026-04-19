@@ -1,0 +1,13 @@
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  cppcoreguidelines-avoid-c-arrays,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-narrowing-conversions
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(network|server|storage2|common|protocol)/'
+FormatStyle: file
+

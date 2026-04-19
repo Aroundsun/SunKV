@@ -50,6 +50,8 @@ Makefile
 # Configuration files (if any)
 config.json
 *.conf
+# Track example configs under doc/
+!doc/*.conf
 
 # Runtime data
 data/

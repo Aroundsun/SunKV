@@ -89,6 +89,12 @@ ctest --test-dir build -L server --output-on-failure
 ctest --test-dir build -L storage2 --output-on-failure
 ```
 
+## 开发与质量门禁
+
+- 格式化：`.clang-format`
+- 静态检查：`.clang-tidy`
+- 本地运行与 CI 门禁说明见：`doc/质量门禁与贡献指南.md`
+
 ## 版本与兼容性说明
 
 - **项目版本阶段**：当前仓库处于持续演进阶段，建议以主分支最新代码与对应测试结果作为行为基准。
