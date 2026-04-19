@@ -40,19 +40,21 @@ void Socket::listen() {
     }
 }
 
-int Socket::accept() {
-    struct sockaddr_in clientAddr;
+int Socket::accept(struct sockaddr_in* out_peer) {
+    struct sockaddr_in clientAddr {};
     socklen_t clientAddrLen = sizeof(clientAddr);
-    
-    int connfd = ::accept4(sockfd_, (struct sockaddr*)&clientAddr, 
-                         &clientAddrLen, SOCK_NONBLOCK | SOCK_CLOEXEC);
+
+    int connfd = ::accept4(sockfd_, (struct sockaddr*)&clientAddr, &clientAddrLen, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (connfd < 0) {
         int savedErrno = errno;
         if (savedErrno != EAGAIN && savedErrno != EWOULDBLOCK) {
             LOG_ERROR("接受连接失败: {}", strerror(savedErrno));
         }
     }
-    
+
+    if (connfd >= 0 && out_peer) {
+        *out_peer = clientAddr;
+    }
     return connfd;
 }
 

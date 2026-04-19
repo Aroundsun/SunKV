@@ -126,7 +126,8 @@ void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& con
     
     LOG_DEBUG("TcpServer::removeConnectionInLoop [{}] - 连接 [{}]", name_, conn->name());
     
-    size_t n = connections_.erase(conn->name());
+    const size_t n = connections_.erase(conn->name());
+    (void)n;
     assert(n == 1);
     
     EventLoop* ioLoop = conn->getLoop();

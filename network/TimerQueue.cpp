@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <string.h>
 #include <iterator>
+#include <stdexcept>
 
 TimerQueue::TimerQueue(EventLoop* loop)
     : loop_(loop),
@@ -138,7 +139,7 @@ int TimerQueue::createTimerfd() {
     int fd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (fd < 0) {
         LOG_ERROR("创建 timerfd 失败: {}", strerror(errno));
-        exit(1);
+        throw std::runtime_error("create timerfd failed");
     }
     return fd;
 }

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <cstdint>
+#include <netinet/in.h>
 
 // Socket 类，封装 socket 操作
 class Socket {
@@ -24,7 +25,9 @@ public:
     void listen();
     
     // 接受连接
-    int accept();
+    // - 返回新连接 fd；失败返回 -1
+    // - 若 out_peer 非空，写入对端 IPv4 地址与端口（sockaddr_in）
+    int accept(struct sockaddr_in* out_peer);
     
     // 连接到服务器
     void connect(const std::string& addr, uint16_t port);

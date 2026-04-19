@@ -4,9 +4,10 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <stdexcept>
 
 namespace {
-
+// 将 Channel 事件转换为 epoll 事件
 static uint32_t channelEventsToEpoll(int ch_events) {
     uint32_t ev = 0;
     if (ch_events & Channel::kReadEventStatic) {
@@ -19,6 +20,7 @@ static uint32_t channelEventsToEpoll(int ch_events) {
     return ev;
 }
 
+// 将 epoll 事件转换为 Channel 事件
 static int epollReventsToChannel(uint32_t ep) {
     int rev = Channel::kNoneEventStatic;
     if (ep & (EPOLLERR)) {
@@ -39,9 +41,9 @@ static int epollReventsToChannel(uint32_t ep) {
 } // namespace
 
 // epoll 操作类型
-static const int kNew = -1;
-static const int kAdded = 1;
-static const int kDeleted = 2;
+static const int kNew = -1; // 新的 Channel，未添加到 epoll
+static const int kAdded = 1; // 已添加的 Channel，已添加到 epoll
+static const int kDeleted = 2; // 已删除的 Channel，已从 epoll 中删除
 
 Poller::Poller(EventLoop* loop) 
     : ownerLoop_(loop),
@@ -50,7 +52,7 @@ Poller::Poller(EventLoop* loop)
     
     if (epollFd_ < 0) {
         LOG_ERROR("创建 epoll 失败: {}", strerror(errno));
-        exit(1);
+        throw std::runtime_error("create epoll failed");
     }
     
     LOG_DEBUG("Poller 已创建，epollFd={}", epollFd_);

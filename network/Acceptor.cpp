@@ -44,12 +44,10 @@ void Acceptor::listen() {
 void Acceptor::handleRead() {
     loop_->assertInLoopThread();
     
-    struct sockaddr_in peerAddr;
-    socklen_t peerAddrLen = sizeof(peerAddr);
-    
     // 轮询接受所有连接
     while (true) {
-        int connfd = acceptSocket_->accept();
+        struct sockaddr_in peerAddr {};
+        int connfd = acceptSocket_->accept(&peerAddr);
         if (connfd >= 0) {
             // 获取对端地址
             char buf[INET_ADDRSTRLEN];

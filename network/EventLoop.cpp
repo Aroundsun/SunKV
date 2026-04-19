@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sstream>
+#include <stdexcept>
 
 EventLoop::EventLoop() 
     : looping_(false),
@@ -52,6 +53,7 @@ void EventLoop::loop() {
     
     looping_ = true;
     quit_ = false;
+    // 打印线程 ID
     std::ostringstream oss;
     oss << threadId_;
     LOG_INFO("EventLoop {} 开始循环", oss.str());
@@ -60,6 +62,7 @@ void EventLoop::loop() {
         // 等待事件
         std::vector<Channel*> activeChannels;
         int timeoutMs = poller_->poll(1000, &activeChannels);
+        (void)timeoutMs;
         
         eventHandling_ = true;
         for (Channel* channel : activeChannels) {
@@ -113,7 +116,6 @@ void EventLoop::wakeup() {
     uint64_t one = 1;
     ssize_t n = write(wakeupFd_, &one, sizeof(one));
     if (n != sizeof(one)) {
-        // 只在真正的错误时记录日志，忽略 EAGAIN
         if (n != -1 || errno != EAGAIN) {
             LOG_ERROR("EventLoop::wakeup() 写入字节数异常: {}, 期望 8, errno: {}", n, errno);
         }
@@ -175,7 +177,7 @@ int EventLoop::createEventfd() {
     int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd < 0) {
         LOG_ERROR("创建 eventfd 失败: {}", strerror(errno));
-        exit(1);
+        throw std::runtime_error("create eventfd failed");
     }
     return fd;
 }
