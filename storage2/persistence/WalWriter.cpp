@@ -104,21 +104,37 @@ bool WalWriter::appendBytes(const uint8_t* data, size_t len) {
     if (fd_ < 0) return false;
     if (!data || len == 0) return true;
 
-    if (max_file_bytes_ > 0) {
-        struct stat st {};
-        if (::fstat(fd_, &st) == 0) {
-            const auto cur = static_cast<size_t>(st.st_size);
-            if (cur >= max_file_bytes_) {
-                if (!rotate_()) return false;
-            } else if (cur > 0 && cur + len > max_file_bytes_) {
-                if (!rotate_()) return false;
-            } else if (cur == 0 && len > max_file_bytes_) {
-                // 单条日志大于上限：仍写入当前文件（与 group commit 语义一致）
-            }
-        }
+    // max_file_bytes_==0：不限制单文件大小。
+    if (max_file_bytes_ == 0) {
+        return writeAll(fd_, data, len);
     }
 
-    return writeAll(fd_, data, len);
+    // 有上限时：单次 append 可能携带「合并后的大 buffer」（异步 group commit），
+    // 不能依赖「单条 mutation < 上限」；必须在同一 appendBytes 内分块写并滚动，
+    // 否则会出现 wal2.bin 远超 max_wal_file_size_mb 仍不 rename 的现象。
+    size_t offset = 0;
+    while (offset < len) {
+        struct stat st {};
+        if (::fstat(fd_, &st) != 0) {
+            return false;
+        }
+        const auto cur = static_cast<size_t>(st.st_size);
+        if (cur >= max_file_bytes_) {
+            if (!rotate_()) return false;
+            continue;
+        }
+        const size_t room = max_file_bytes_ - cur;
+        if (room == 0) {
+            if (!rotate_()) return false;
+            continue;
+        }
+        const size_t chunk = std::min(len - offset, room);
+        if (!writeAll(fd_, data + offset, chunk)) {
+            return false;
+        }
+        offset += chunk;
+    }
+    return true;
 }
 
 void WalWriter::flush() {

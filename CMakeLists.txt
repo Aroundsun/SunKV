@@ -94,6 +94,17 @@ set(STORAGE2_SOURCES
 # storage2 实现库（主程序与 v2 测试均链接该库）。
 add_library(storage2lib STATIC ${STORAGE2_SOURCES})
 
+# 独立只读工具：将快照 / WAL 转存为 tool/ 下 .txt
+add_executable(dump_persistent tool/dump_persistent.cpp)
+target_include_directories(dump_persistent PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(dump_persistent PRIVATE "TOOL_OUT_DIR_STR=\"${CMAKE_SOURCE_DIR}/tool\"")
+target_link_libraries(dump_persistent PRIVATE
+    Threads::Threads
+    spdlog::spdlog
+    fmt::fmt
+    storage2lib
+)
+
 # 服务器模块源文件
 set(SERVER_SOURCES
     server/Server.cpp                      # 服务器主类
@@ -656,6 +667,17 @@ elseif(BUILD_TEST)
     )
     add_test(NAME storage2_wal_truncation COMMAND storage2_wal_truncation_test)
 
+    add_executable(storage2_wal_max_file_enforced_test
+        test/storage2/storage2_wal_max_file_enforced_test.cpp
+        network/logger.cpp
+    )
+    target_link_libraries(storage2_wal_max_file_enforced_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+    add_test(NAME storage2_wal_max_file_enforced COMMAND storage2_wal_max_file_enforced_test)
+
     add_executable(storage2_factory_wiring_test
         test/storage2/storage2_factory_wiring_test.cpp
         network/logger.cpp
@@ -717,6 +739,7 @@ elseif(BUILD_TEST)
         storage2_recovery_orchestrator
         storage2_wal_roundtrip
         storage2_wal_truncation
+        storage2_wal_max_file_enforced
         storage2_factory_wiring
         storage2_ttl_lazy_expiry_semantics
         storage2_pttl_boundary

@@ -173,5 +173,17 @@ bool WalReader::readAllMutationsWalChain(const std::string& primary_path, std::v
     return true;
 }
 
+std::uintmax_t WalReader::walChainFileBytesTotal(const std::string& primary_path) {
+    namespace fs = std::filesystem;
+    std::uintmax_t total = 0;
+    std::error_code ec;
+    for (const auto& path : walSegmentPathsOrdered(primary_path)) {
+        if (fs::exists(path, ec)) {
+            total += fs::file_size(path, ec);
+        }
+    }
+    return total;
+}
+
 } // namespace sunkv::storage2
 
