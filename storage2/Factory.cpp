@@ -33,6 +33,9 @@ Storage2Components createStorage2(Storage2WiringOptions opt) {
         popt.wal_group_commit_max_mutations = opt.wal_group_commit_max_mutations;
         popt.wal_group_commit_max_bytes = opt.wal_group_commit_max_bytes;
         popt.max_wal_file_size_mb = opt.max_wal_file_size_mb;
+        popt.engine_for_snapshot = engine_ptr;
+        popt.enable_snapshot = opt.enable_snapshot;
+        popt.snapshot_interval_seconds = opt.snapshot_interval_seconds;
         orch = std::make_unique<PersistenceOrchestrator>(popt);
     }
 

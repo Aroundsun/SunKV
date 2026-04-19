@@ -139,11 +139,8 @@ bool Server::start() {
     ttl_cleanup_running_.store(true);
     ttl_cleanup_thread_ = std::thread(&Server::ttlCleanupThread, this);
 
-    if (config_.enable_snapshot && config_.snapshot_interval_seconds > 0) {
-        snapshot_interval_running_.store(true);
-        snapshot_interval_thread_ = std::thread(&Server::snapshotIntervalThread, this);
-    }
-    
+    // 周期性快照由 PersistenceOrchestrator 内线程负责（见 Factory / initializeStorage）
+
     // 启动信号转发线程：从管道读取信号通知，再在普通线程上下文中触发停止
     signal_thread_running_.store(true);
     signal_thread_ = std::thread([this]() {
@@ -228,11 +225,10 @@ void Server::stop() {
         ttl_cleanup_thread_.join();
     }
 
-        snapshot_interval_running_.store(false);
-        if (snapshot_interval_thread_.joinable()) {
-            snapshot_interval_thread_.join();
+        if (storage2_.orchestrator) {
+            storage2_.orchestrator->stopPeriodicSnapshot();
         }
-    
+
         // 停止周期统计线程
         stats_report_running_.store(false);
         if (stats_report_thread_.joinable()) {
@@ -327,6 +323,8 @@ bool Server::initializeStorage() {
             static_cast<size_t>(std::max(1, config_.wal_group_commit_max_mutations));
         opt.wal_group_commit_max_bytes = static_cast<size_t>(std::max(1, config_.wal_group_commit_max_bytes));
         opt.max_wal_file_size_mb = config_.max_wal_file_size_mb;
+        opt.enable_snapshot = config_.enable_snapshot;
+        opt.snapshot_interval_seconds = config_.snapshot_interval_seconds;
 
         // 确保存储目录存在
         std::filesystem::create_directories(config_.wal_dir);
@@ -356,7 +354,12 @@ bool Server::initializeStorage() {
 
 bool Server::create_multi_type_snapshot() {
     try {
-        if (!storage2_.engine) return false;
+        if (storage2_.orchestrator) {
+            return storage2_.orchestrator->takeSnapshotNow();
+        }
+        if (!storage2_.engine) {
+            return false;
+        }
         const std::string snapshot_path = config_.snapshot_dir + "/snapshot2.bin";
         auto records = storage2_.engine->dumpAllLiveRecords();
         return sunkv::storage2::SnapshotWriter::writeToFile(records, snapshot_path);
@@ -579,22 +582,6 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
     }
 }
 
-void Server::snapshotIntervalThread() {
-    while (snapshot_interval_running_.load()) {
-        const int sec = std::max(1, config_.snapshot_interval_seconds);
-        std::this_thread::sleep_for(std::chrono::seconds(sec));
-        if (!snapshot_interval_running_.load()) {
-            break;
-        }
-        if (!config_.enable_snapshot) {
-            continue;
-        }
-        if (!create_multi_type_snapshot()) {
-            LOG_WARN("周期性快照写入失败（将继续重试）");
-        }
-    }
-}
-
 void Server::ttlCleanupThread() {
     
     while (ttl_cleanup_running_) {
@@ -710,7 +697,7 @@ void Server::gracefulShutdown() {
         LOG_DEBUG("TTL 清理线程已停止");
     }
     
-    // 5. 创建最终快照（storage2）
+    // 5. 创建最终快照（storage2）：须先于 WAL flush，恢复顺序为 recoverInto 先读快照再回放 WAL。
     if (storage2_.engine) {
         LOG_INFO("正在创建最终快照...");
         LOG_DEBUG("正在创建最终快照...");

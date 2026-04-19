@@ -1,10 +1,15 @@
 #include "PersistenceOrchestrator.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <filesystem>
+
+#include <sys/stat.h>
 
 #include "../../network/logger.h"
 #include "SnapshotReader.h"
+#include "SnapshotWriter.h"
 #include "WalReader.h"
 #include "WalWriter.h"
 #include "../engine/StorageEngine.h"
@@ -13,6 +18,37 @@
 namespace sunkv::storage2 {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+/// 在 recoverInto 首尾各打一条 WAL 的 bytes/inode，用于核对恢复过程是否改动了同一 WAL 文件。
+struct WalRecoverSizeProbe {
+    std::string path;
+
+    explicit WalRecoverSizeProbe(std::string p) : path(std::move(p)) { log_("before recoverInto"); }
+
+    ~WalRecoverSizeProbe() { log_("after recoverInto"); }
+
+    void log_(const char* when) const {
+        if (path.empty()) {
+            return;
+        }
+        struct stat st {};
+        if (::stat(path.c_str(), &st) != 0) {
+            LOG_INFO("[storage2.recover] wal probe ({}): path='{}' stat_failed errno={}", when, path, errno);
+            return;
+        }
+        if (!S_ISREG(st.st_mode)) {
+            LOG_INFO("[storage2.recover] wal probe ({}): path='{}' not_regular st_mode=0{:o}", when, path,
+                     static_cast<unsigned>(st.st_mode));
+            return;
+        }
+        LOG_INFO("[storage2.recover] wal probe ({}): path='{}' bytes={} inode={}", when, path,
+                 static_cast<uint64_t>(st.st_size), static_cast<uint64_t>(st.st_ino));
+    }
+};
+
+} // namespace
 
 PersistenceOrchestrator::PersistenceOrchestrator() : PersistenceOrchestrator(Options{}) {}
 
@@ -26,15 +62,54 @@ PersistenceOrchestrator::PersistenceOrchestrator(Options opt) : opt_(opt) {
     if (opt_.async) {
         worker_.emplace([this] { workerLoop_(); });
     }
+    if (opt_.enable_snapshot && opt_.snapshot_interval_seconds > 0 && opt_.engine_for_snapshot &&
+        !opt_.snapshot_path.empty()) {
+        snapshot_interval_running_.store(true);
+        snapshot_thread_ = std::thread([this] { snapshotIntervalLoop_(); });
+    }
 }
 
 PersistenceOrchestrator::~PersistenceOrchestrator() {
+    stopPeriodicSnapshot();
     stop_.store(true);
     cv_.notify_all();
     if (worker_.has_value() && worker_->joinable()) {
         worker_->join();
     }
     flush();
+}
+
+bool PersistenceOrchestrator::takeSnapshotNow() {
+    if (!opt_.engine_for_snapshot || opt_.snapshot_path.empty()) {
+        return false;
+    }
+    try {
+        auto records = opt_.engine_for_snapshot->dumpAllLiveRecords();
+        return SnapshotWriter::writeToFile(records, opt_.snapshot_path);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[storage2.snapshot] takeSnapshotNow failed: {}", e.what());
+        return false;
+    }
+}
+
+void PersistenceOrchestrator::stopPeriodicSnapshot() {
+    snapshot_interval_running_.store(false);
+    if (snapshot_thread_.joinable()) {
+        snapshot_thread_.join();
+    }
+}
+
+void PersistenceOrchestrator::snapshotIntervalLoop_() {
+    while (snapshot_interval_running_.load()) {
+        const int sec = std::max(1, opt_.snapshot_interval_seconds);
+        std::this_thread::sleep_for(std::chrono::seconds(sec));
+        if (!snapshot_interval_running_.load()) {
+            break;
+        }
+        if (!takeSnapshotNow()) {
+            LOG_WARN("[storage2.snapshot] periodic snapshot failed (will retry)");
+        }
+    }
 }
 
 void PersistenceOrchestrator::addConsumer(MutationConsumer consumer) {
@@ -129,6 +204,7 @@ void PersistenceOrchestrator::flush() {
 bool PersistenceOrchestrator::recoverInto(StorageEngine& engine) {
     LOG_INFO("[storage2.recover] begin (snapshot_path='{}', wal_path='{}')",
              opt_.snapshot_path, opt_.wal_path);
+    const WalRecoverSizeProbe wal_size_probe{opt_.wal_path};
 
     // 1) Snapshot
     if (!opt_.snapshot_path.empty()) {

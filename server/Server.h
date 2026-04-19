@@ -13,8 +13,8 @@
 #include "../network/EventLoop.h"
 #include "../protocol/RESPType.h"
 #include "../protocol/RESPParser.h"
-#include "../common/Config.h"    // 配置系统
-#include "../storage2/Factory.h"
+#include "common/Config.h"
+#include "storage2/Factory.h"
 
 struct ArrayCmdDispatchCtx;
 
@@ -175,8 +175,6 @@ private:
      */
     void statsReportThread();
 
-    /// 周期性快照（enable_snapshot 且 snapshot_interval_seconds>0）
-    void snapshotIntervalThread();
     
     /**
      * @brief 构建统计信息文本
@@ -211,9 +209,6 @@ private:
     std::thread ttl_cleanup_thread_;                  // TTL 清理线程
     std::atomic<bool> ttl_cleanup_running_{false};     // TTL 清理线程运行状态
 
-    std::thread snapshot_interval_thread_;
-    std::atomic<bool> snapshot_interval_running_{false};
-    
     // 统计输出线程
     std::thread stats_report_thread_;
     std::atomic<bool> stats_report_running_{false};
