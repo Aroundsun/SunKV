@@ -21,6 +21,9 @@ public:
     /// 按时间顺序回放主 WAL 及其滚动归档（`<path>.<N>`），用于恢复。
     static bool readAllMutationsWalChain(const std::string& primary_path, std::vector<Mutation>* out);
 
+    /// 与 readAllMutationsWalChain 相同的链上各文件 `file_size` 之和（用于 dump 等体积对比）。
+    static std::uintmax_t walChainFileBytesTotal(const std::string& primary_path);
+
     struct ReadStats {
         size_t file_bytes{0};
         size_t decoded_mutations{0};
