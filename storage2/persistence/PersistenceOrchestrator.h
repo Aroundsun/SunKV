@@ -17,13 +17,7 @@ namespace sunkv::storage2 {
 class WalWriter;
 class StorageEngine;
 
-// v0.1：持久化编排器骨架
-//
-// 目标：
-// - 接收 MutationBatch（同步或异步）
-// - 将来在这里统一接入：WAL 写入、刷盘策略、快照触发、恢复流程
-//
-// 当前阶段仅提供“接收与回调”能力，便于后续逐步接入真实 IO。
+// 持久化编排：WAL 异步队列、刷盘策略、周期性/手动快照、恢复（快照 + WAL 链）。
 class PersistenceOrchestrator final {
 public:
     // 选项
@@ -33,7 +27,6 @@ public:
         // 传 0 会被视为 1，避免“永远满队列”。
         size_t max_queue{100000};
 
-        // 可选：启用 WAL 落盘（v0.1 先支持 WAL；快照后续再接入调度）
         bool enable_wal{false};
         std::string wal_path{};
 
@@ -55,8 +48,16 @@ public:
         /// WAL 单文件上限（MB），0 表示不滚动
         int max_wal_file_size_mb{0};
 
-        // 可选：恢复时使用的快照路径（若不存在/为空则跳过）
+        /// 快照文件路径（恢复与写入共用；为空则不在 recover/takeSnapshot 中使用）
         std::string snapshot_path{};
+
+        /// 非拥有指针：用于 dump 写快照；生命周期须长于本 Orchestrator（见 Storage2Components 析构顺序）
+        StorageEngine* engine_for_snapshot{nullptr};
+
+        /// 是否启用周期性快照线程（仍要求 snapshot_path 非空且 engine 非空且 interval>0）
+        bool enable_snapshot{false};
+        /// 周期秒数；<=0 表示不启动周期线程
+        int snapshot_interval_seconds{0};
     };
 
     using MutationConsumer = std::function<void(const MutationBatch&)>;
@@ -83,11 +84,19 @@ public:
     // - wal_path 为空/不存在则视为无 WAL
     bool recoverInto(StorageEngine& engine);
 
+    /// 将当前 engine 全量 dump 写入 snapshot_path（与 recoverInto 使用同一路径）。
+    /// 尽力而为一致性，不打停写入。
+    bool takeSnapshotNow();
+
+    /// 停止周期性快照线程并 join（Server 关闭时在 gracefulShutdown 之前调用，避免与最终快照并发）。
+    void stopPeriodicSnapshot();
+
     // 统计：历史丢弃计数（当前实现默认背压阻塞，不应增长；保留用于兼容与观测）。
     uint64_t droppedBatches() const { return dropped_batches_.load(); }
 
 private:
     void workerLoop_();
+    void snapshotIntervalLoop_();
 
     Options opt_{};
     std::vector<MutationConsumer> consumers_;
@@ -100,7 +109,9 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<uint64_t> dropped_batches_{0};
     std::optional<std::thread> worker_;
+
+    std::atomic<bool> snapshot_interval_running_{false};
+    std::thread snapshot_thread_;
 };
 
 } // namespace sunkv::storage2
-

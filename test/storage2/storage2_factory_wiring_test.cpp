@@ -51,6 +51,28 @@ int main() {
     CHECK(*g.value == "v1");
 
     (void)fs::remove(wal_path);
+
+    // takeSnapshotNow：engine 指针由 Factory 注入，手动快照写入 snapshot_path（不启周期线程以免阻塞用例）
+    const std::string snap_path = tmpfile("storage2_factory_snap.bin");
+    (void)fs::remove(snap_path);
+    {
+        sunkv::storage2::Storage2WiringOptions opt3;
+        opt3.enable_wal = true;
+        opt3.wal_path = tmpfile("storage2_factory_wal2.bin");
+        opt3.snapshot_path = snap_path;
+        (void)fs::remove(opt3.wal_path);
+        auto c3 = sunkv::storage2::createStorage2(opt3);
+        CHECK(c3.orchestrator != nullptr);
+        CHECK(c3.engine != nullptr);
+        auto r0 = c3.api->set("sk", "sv");
+        CHECK(r0.status == sunkv::storage2::StatusCode::Ok);
+        c3.orchestrator->flush();
+        CHECK(c3.orchestrator->takeSnapshotNow());
+        CHECK(fs::exists(snap_path));
+        (void)fs::remove(opt3.wal_path);
+        (void)fs::remove(snap_path);
+    }
+
     std::cout << "storage2_factory_wiring_test passed." << std::endl;
     return 0;
 }

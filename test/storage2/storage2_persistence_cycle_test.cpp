@@ -110,7 +110,7 @@ int main() {
         assert(r.has_value());
         assert(r->value.type == DataType::STRING);
         // 最终会被 WAL 的 set(k1,v1) 覆盖
-        assert(r->value.string_value == "v1");
+        assert(r->value.string_value.str() == "v1");
     }
 
     (void)fs::remove(wal_path);
