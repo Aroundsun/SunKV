@@ -1,5 +1,7 @@
 #include "WalReader.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <vector>
@@ -8,6 +10,53 @@
 #include "WalCodec.h"
 
 namespace sunkv::storage2 {
+
+namespace {
+
+static bool allDigits(std::string_view s) {
+    if (s.empty()) return false;
+    for (char c : s) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    }
+    return true;
+}
+
+static std::vector<std::string> walSegmentPathsOrdered(const std::string& primary_path) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    std::vector<std::pair<int, std::string>> numbered;
+    fs::path p(primary_path);
+    const fs::path dir = p.parent_path();
+    const std::string base = p.filename().string();
+    std::error_code ec;
+    if (fs::exists(dir, ec)) {
+        for (const auto& ent : fs::directory_iterator(dir, ec)) {
+            if (ec) break;
+            const std::string fn = ent.path().filename().string();
+            if (fn.size() <= base.size() + 1) continue;
+            if (fn.compare(0, base.size(), base) != 0) continue;
+            if (fn[base.size()] != '.') continue;
+            const std::string suf = fn.substr(base.size() + 1);
+            if (!allDigits(suf)) continue;
+            try {
+                const int n = std::stoi(suf);
+                numbered.push_back({n, ent.path().string()});
+            } catch (...) {
+            }
+        }
+    }
+    std::sort(numbered.begin(), numbered.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& kv : numbered) {
+        out.push_back(kv.second);
+    }
+    if (fs::exists(primary_path, ec)) {
+        out.push_back(primary_path);
+    }
+    return out;
+}
+
+} // namespace
 
 WalReader::WalReader(std::string path) : path_(std::move(path)) {}
 
@@ -102,6 +151,24 @@ bool WalReader::readAllMutations(std::vector<Mutation>* out) {
     for (auto& b : batches) {
         if (b.empty()) continue;
         out->push_back(std::move(b[0]));
+    }
+    return true;
+}
+
+bool WalReader::readAllMutationsWalChain(const std::string& primary_path, std::vector<Mutation>* out) {
+    if (!out) return false;
+    out->clear();
+    const std::vector<std::string> paths = walSegmentPathsOrdered(primary_path);
+    if (paths.empty()) {
+        return true;
+    }
+    for (const auto& path : paths) {
+        WalReader wr(path);
+        std::vector<Mutation> chunk;
+        if (!wr.readAllMutations(&chunk)) {
+            return false;
+        }
+        out->insert(out->end(), std::make_move_iterator(chunk.begin()), std::make_move_iterator(chunk.end()));
     }
     return true;
 }

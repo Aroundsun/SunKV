@@ -22,12 +22,14 @@ class EventLoop;
 class Channel;
 class Socket;
 
-/**
- * @enum TcpConnectionState
- * @brief TCP 连接状态枚举
- * 
- * 定义了 TCP 连接的各种状态
- */
+/// 新连接建立后应用到客户端 socket 的可选调优（0 表示不设置该项）
+struct TcpSocketTuningOptions {
+    int send_buffer_size{0};
+    int recv_buffer_size{0};
+    /// >0：开启 SO_KEEPALIVE，并在 Linux 上尽力设置 TCP_KEEPIDLE（秒）
+    int tcp_keepalive_idle_seconds{0};
+};
+
 enum class TcpConnectionState {
     kConnecting,    ///< 连接建立中
     kConnected,     ///< 已连接
@@ -60,74 +62,31 @@ public:
     TcpConnection(EventLoop* loop, const std::string& name, int sockfd, 
                   const std::string& localAddr, const std::string& peerAddr);
     
-    /**
-     * @brief 析构函数
-     */
+
     ~TcpConnection();
     
     // 禁止拷贝和赋值
     TcpConnection(const TcpConnection&) = delete;
     TcpConnection& operator=(const TcpConnection&) = delete;
     
-    /**
-     * @brief 获取事件循环指针
-     * @return 事件循环指针
-     */
+
     EventLoop* getLoop() const { return loop_; }
-    
-    /**
-     * @brief 获取连接名称
-     * @return 连接名称
-     */
     const std::string& name() const { return name_; }
-    
-    /**
-     * @brief 获取本地地址
-     * @return 本地地址字符串
-     */
     const std::string& localAddress() const { return localAddr_; }
-    
-    /**
-     * @brief 获取对端地址
-     * @return 对端地址字符串
-     */
-    const std::string& peerAddress() const { return peerAddr_; }
-    
-    /**
-     * @brief 检查是否已连接
-     * @return 是否已连接
-     */
+    const std::string& peerAddress() const { return peerAddr_; } 
     bool connected() const { return state_ == TcpConnectionState::kConnected; }
-    
-    /**
-     * @brief 检查是否已断开
-     * @return 是否已断开
-     */
     bool disconnected() const { return state_ == TcpConnectionState::kDisconnected; }
     
-    /**
-     * @brief 设置连接回调函数
-     * @param cb 回调函数
-     */
+
     void setConnectionCallback(const ConnectionCallback& cb) { connectionCallback_ = cb; }
     
-    /**
-     * @brief 设置消息回调函数
-     * @param cb 回调函数
-     */
     void setMessageCallback(const MessageCallback& cb) { messageCallback_ = cb; }
     
-    /**
-     * @brief 设置写完成回调函数
-     * @param cb 回调函数
-     */
     void setWriteCompleteCallback(const WriteCompleteCallback& cb) { writeCompleteCallback_ = cb; }
     
-    /**
-     * @brief 设置关闭回调函数
-     * @param cb 回调函数
-     */
     void setCloseCallback(const CloseCallback& cb) { closeCallback_ = cb; }
+
+    void setSocketTuningOptions(const TcpSocketTuningOptions& o) { tuning_ = o; }
     
     /**
      * @brief 连接建立时调用
@@ -245,6 +204,8 @@ private:
     MessageCallback messageCallback_;                     ///< 消息回调
     CloseCallback closeCallback_;                         ///< 关闭回调
     WriteCompleteCallback writeCompleteCallback_;          ///< 写完成回调
+
+    TcpSocketTuningOptions tuning_{};
     
     static std::atomic<int64_t> s_numCreated_;            ///< 已创建的连接数统计
 };

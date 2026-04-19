@@ -4,6 +4,7 @@
 #include "../protocol/RESPSerializer.h"
 #include "../protocol/RESPType.h"
 #include "../common/MemoryPool.h"
+#include "../storage2/api/StatusCode.h"
 #include "../storage2/engine/Time.h"
 #include <algorithm>
 #include <cctype>
@@ -131,7 +132,12 @@ bool ArrayCmdDispatchCtx::cmdSet() {
     std::string key = bulk_value(1);
     std::string value = bulk_value(2);
     if (server.storage2_.api) {
-        (void)server.storage2_.api->set(key, value);
+        auto r = server.storage2_.api->set(key, value);
+        if (r.status == sunkv::storage2::StatusCode::QuotaExceeded) {
+            auto err = RESPSerializer::serializeError("OOM maxmemory");
+            conn->send(err.data(), err.size());
+            return true;
+        }
     }
     conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
     return true;
@@ -678,6 +684,11 @@ bool ArrayCmdDispatchCtx::cmdExpire() {
     std::string key = key_bulk->getValue();
     try {
         int64_t ttl_seconds = std::stoll(ttl_bulk->getValue());
+        if (ttl_seconds > server.maxTtlSeconds()) {
+            auto error = RESPSerializer::serializeError("ERR TTL exceeds server max_ttl_seconds");
+            conn->send(error.data(), error.size());
+            return true;
+        }
         if (!server.storage2_.api) {
             auto response = RESPSerializer::serializeInteger(0);
             conn->send(response.data(), response.size());

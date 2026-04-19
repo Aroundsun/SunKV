@@ -18,7 +18,10 @@ PersistenceOrchestrator::PersistenceOrchestrator() : PersistenceOrchestrator(Opt
 
 PersistenceOrchestrator::PersistenceOrchestrator(Options opt) : opt_(opt) {
     if (opt_.enable_wal && !opt_.wal_path.empty()) {
-        wal_writer_ = std::make_unique<WalWriter>(opt_.wal_path);
+        const size_t max_wal_bytes = opt_.max_wal_file_size_mb > 0
+                                         ? static_cast<size_t>(opt_.max_wal_file_size_mb) * 1024 * 1024
+                                         : 0;
+        wal_writer_ = std::make_unique<WalWriter>(opt_.wal_path, max_wal_bytes);
     }
     if (opt_.async) {
         worker_.emplace([this] { workerLoop_(); });
@@ -153,22 +156,12 @@ bool PersistenceOrchestrator::recoverInto(StorageEngine& engine) {
             LOG_INFO("[storage2.recover] wal not found: path='{}'", opt_.wal_path);
             return true;
         }
-        WalReader wr(opt_.wal_path);
         std::vector<Mutation> muts;
-        if (!wr.readAllMutations(&muts)) {
-            const auto& st = wr.lastReadStats();
-            LOG_ERROR("[storage2.recover] wal parse failed: path='{}' bytes={} decoded_mutations={} stopped_offset={} incomplete_tail={} corrupt={}",
-                      opt_.wal_path, st.file_bytes, st.decoded_mutations, st.stopped_offset,
-                      st.saw_incomplete_tail ? 1 : 0, st.saw_corrupt ? 1 : 0);
+        if (!WalReader::readAllMutationsWalChain(opt_.wal_path, &muts)) {
+            LOG_ERROR("[storage2.recover] wal parse failed: base_path='{}'", opt_.wal_path);
             return false;
         }
-        const auto& st = wr.lastReadStats();
-        if (st.saw_incomplete_tail) {
-            LOG_WARN("[storage2.recover] wal has incomplete tail; stop replay at offset={} bytes (file_bytes={}), decoded_mutations={}",
-                     st.stopped_offset, st.file_bytes, st.decoded_mutations);
-        } else {
-            LOG_INFO("[storage2.recover] wal parsed: bytes={} decoded_mutations={}", st.file_bytes, st.decoded_mutations);
-        }
+        LOG_INFO("[storage2.recover] wal chain parsed: decoded_mutations={}", muts.size());
 
         size_t applied = 0;
         for (const auto& m : muts) {

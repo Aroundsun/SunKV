@@ -44,6 +44,17 @@ void TcpConnection::connectEstablished() {
     setState(TcpConnectionState::kConnected);
     channel_->tie(shared_from_this());
     channel_->enableReading();
+
+    if (tuning_.send_buffer_size > 0) {
+        socket_->setSendBufferSize(tuning_.send_buffer_size);
+    }
+    if (tuning_.recv_buffer_size > 0) {
+        socket_->setRecvBufferSize(tuning_.recv_buffer_size);
+    }
+    if (tuning_.tcp_keepalive_idle_seconds > 0) {
+        socket_->setKeepAlive(true);
+        socket_->setTcpKeepAliveIdleSeconds(tuning_.tcp_keepalive_idle_seconds);
+    }
     
     if (connectionCallback_) {
         connectionCallback_(shared_from_this());

@@ -9,7 +9,7 @@ namespace sunkv::storage2 {
 
 Storage2Components createStorage2(Storage2WiringOptions opt) {
     // 1) backend
-    std::unique_ptr<IBackend> backend = std::make_unique<InMemoryBackend>();
+    std::unique_ptr<IBackend> backend = std::make_unique<InMemoryBackend>(opt.max_storage_bytes);
 
     // 2) engine
     auto engine = std::make_unique<StorageEngine>(std::move(backend));
@@ -22,11 +22,17 @@ Storage2Components createStorage2(Storage2WiringOptions opt) {
     std::unique_ptr<PersistenceOrchestrator> orch;
     if (opt.enable_wal || !opt.snapshot_path.empty()) {
         PersistenceOrchestrator::Options popt;
+        popt.async = opt.wal_async;
+        popt.max_queue = opt.wal_max_queue;
         popt.enable_wal = opt.enable_wal;
         popt.wal_path = opt.wal_path;
         popt.snapshot_path = opt.snapshot_path;
         popt.wal_flush_policy = opt.wal_flush_policy;
         popt.wal_flush_interval_ms = opt.wal_flush_interval_ms;
+        popt.wal_group_commit_linger_ms = opt.wal_group_commit_linger_ms;
+        popt.wal_group_commit_max_mutations = opt.wal_group_commit_max_mutations;
+        popt.wal_group_commit_max_bytes = opt.wal_group_commit_max_bytes;
+        popt.max_wal_file_size_mb = opt.max_wal_file_size_mb;
         orch = std::make_unique<PersistenceOrchestrator>(popt);
     }
 
@@ -43,4 +49,3 @@ Storage2Components createStorage2(Storage2WiringOptions opt) {
 }
 
 } // namespace sunkv::storage2
-

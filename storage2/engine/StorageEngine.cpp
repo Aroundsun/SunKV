@@ -1,22 +1,42 @@
 #include "StorageEngine.h"
 
+#include "../backend/IBackend.h"
 #include "Time.h"
 
 namespace sunkv::storage2 {
 
+namespace {
+
+struct BypassStorageLimitGuard {
+    IBackend* b{nullptr};
+    explicit BypassStorageLimitGuard(IBackend& backend) : b(&backend) { b->setBypassStorageLimit(true); }
+    ~BypassStorageLimitGuard() {
+        if (b) {
+            b->setBypassStorageLimit(false);
+        }
+    }
+};
+
+} // namespace
+
 StorageEngine::StorageEngine(std::unique_ptr<IBackend> backend) : backend_(std::move(backend)) {}
 
 void StorageEngine::loadSnapshot(const std::vector<std::pair<std::string, Record>>& records) {
+    BypassStorageLimitGuard guard(*backend_);
     backend_->clearAll();
     for (const auto& kv : records) {
-        backend_->putRecord(kv.first, kv.second);
+        if (!backend_->putRecord(kv.first, kv.second)) {
+            backend_->clearAll();
+            return;
+        }
     }
 }
 
 bool StorageEngine::applyMutation(const Mutation& m) {
+    BypassStorageLimitGuard guard(*backend_);
     if (m.type == MutationType::PutRecord) {
         if (!m.record.has_value()) return false;
-        backend_->putRecord(m.key, *m.record);
+        if (!backend_->putRecord(m.key, *m.record)) return false;
         return true;
     }
     if (m.type == MutationType::DelKey) {
@@ -56,7 +76,9 @@ StorageResult<bool> StorageEngine::set(const std::string& key, const std::string
     r.expire_at_us = -1;
     r.version = 0;
 
-    backend_->putRecord(key, r);
+    if (!backend_->putRecord(key, r)) {
+        return StorageResult<bool>::err(StatusCode::QuotaExceeded);
+    }
 
     Mutation m;
     m.type = MutationType::PutRecord;
@@ -142,7 +164,9 @@ StorageResult<int64_t> StorageEngine::expire(const std::string& key, int64_t ttl
     }
 
     r->expire_at_us = now + ttl_seconds * 1000'000;
-    backend_->putRecord(key, *r);
+    if (!backend_->putRecord(key, *r)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
     Mutation m;
     m.type = MutationType::PutRecord;
     m.key = key;
@@ -167,7 +191,9 @@ StorageResult<int64_t> StorageEngine::persist(const std::string& key) {
     }
     bool had_ttl = r->expire_at_us >= 0;
     r->expire_at_us = -1;
-    backend_->putRecord(key, *r);
+    if (!backend_->putRecord(key, *r)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
     Mutation m;
     m.type = MutationType::PutRecord;
     m.key = key;
@@ -275,7 +301,9 @@ StorageResult<Record> StorageEngine::getOrInitContainer(const std::string& key, 
         nr.value.string_value.clear();
         nr.expire_at_us = -1;
         nr.version = 0;
-        backend_->putRecord(key, nr);
+        if (!backend_->putRecord(key, nr)) {
+            return StorageResult<Record>::err(StatusCode::QuotaExceeded);
+        }
 
         Mutation m;
         m.type = MutationType::PutRecord;
@@ -304,7 +332,9 @@ StorageResult<int64_t> StorageEngine::lpush(const std::string& key, const std::v
     for (const auto& v : values) {
         r.value.value.list_value.push_front(v);
     }
-    backend_->putRecord(key, r.value);
+    if (!backend_->putRecord(key, r.value)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
 
     Mutation m;
     m.type = MutationType::PutRecord;
@@ -327,7 +357,9 @@ StorageResult<int64_t> StorageEngine::rpush(const std::string& key, const std::v
     for (const auto& v : values) {
         r.value.value.list_value.push_back(v);
     }
-    backend_->putRecord(key, r.value);
+    if (!backend_->putRecord(key, r.value)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
 
     Mutation m;
     m.type = MutationType::PutRecord;
@@ -361,7 +393,9 @@ StorageResult<std::optional<std::string>> StorageEngine::lpop(const std::string&
         m.ts_us = nowEpochUs();
         muts.push_back(std::move(m));
     } else {
-        backend_->putRecord(key, *r);
+        if (!backend_->putRecord(key, *r)) {
+            return StorageResult<std::optional<std::string>>::err(StatusCode::QuotaExceeded);
+        }
         Mutation m;
         m.type = MutationType::PutRecord;
         m.key = key;
@@ -395,7 +429,9 @@ StorageResult<std::optional<std::string>> StorageEngine::rpop(const std::string&
         m.ts_us = nowEpochUs();
         muts.push_back(std::move(m));
     } else {
-        backend_->putRecord(key, *r);
+        if (!backend_->putRecord(key, *r)) {
+            return StorageResult<std::optional<std::string>>::err(StatusCode::QuotaExceeded);
+        }
         Mutation m;
         m.type = MutationType::PutRecord;
         m.key = key;
@@ -459,7 +495,9 @@ StorageResult<int64_t> StorageEngine::sadd(const std::string& key, const std::ve
             ++added;
         }
     }
-    backend_->putRecord(key, r.value);
+    if (!backend_->putRecord(key, r.value)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
 
     Mutation mu;
     mu.type = MutationType::PutRecord;
@@ -495,7 +533,9 @@ StorageResult<int64_t> StorageEngine::srem(const std::string& key, const std::ve
         mu.ts_us = nowEpochUs();
         muts.push_back(std::move(mu));
     } else {
-        backend_->putRecord(key, *r);
+        if (!backend_->putRecord(key, *r)) {
+            return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+        }
         Mutation mu;
         mu.type = MutationType::PutRecord;
         mu.key = key;
@@ -551,7 +591,9 @@ StorageResult<int64_t> StorageEngine::hset(const std::string& key, const std::st
     }
     bool is_new = r.value.value.hash_value.find(field) == r.value.value.hash_value.end();
     r.value.value.hash_value[field] = value;
-    backend_->putRecord(key, r.value);
+    if (!backend_->putRecord(key, r.value)) {
+        return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+    }
 
     Mutation mu;
     mu.type = MutationType::PutRecord;
@@ -603,7 +645,9 @@ StorageResult<int64_t> StorageEngine::hdel(const std::string& key, const std::ve
         mu.ts_us = nowEpochUs();
         muts.push_back(std::move(mu));
     } else {
-        backend_->putRecord(key, *r);
+        if (!backend_->putRecord(key, *r)) {
+            return StorageResult<int64_t>::err(StatusCode::QuotaExceeded);
+        }
         Mutation mu;
         mu.type = MutationType::PutRecord;
         mu.key = key;

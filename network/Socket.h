@@ -37,6 +37,10 @@ public:
     void setReusePort(bool on);
     void setKeepAlive(bool on);
     void setTcpNoDelay(bool on);
+    void setSendBufferSize(int bytes);
+    void setRecvBufferSize(int bytes);
+    /// Linux: TCP_KEEPIDLE；其它平台可能为 no-op
+    void setTcpKeepAliveIdleSeconds(int seconds);
     
     // 获取本地地址
     std::string getLocalAddress() const;
