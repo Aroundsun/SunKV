@@ -166,13 +166,10 @@ install(TARGETS sunkv DESTINATION bin)
 # 启用测试功能
 enable_testing()
 
-# 查找 Google Test 框架
-find_package(GTest QUIET)
-if(GTest_FOUND)
-    # 如果找到 GTest，使用 test 子目录的配置
-    add_subdirectory(test)
-elseif(BUILD_TEST)
-    # 如果没有 GTest 但启用了 BUILD_TEST，使用简单测试框架
+# 测试入口统一：仓库内测试由 BUILD_TEST 控制，不依赖系统是否安装 GTest。
+# 说明：避免出现“某些环境恰好装了 GTest 反而走到不存在的 test/ 子目录”。
+if(BUILD_TEST)
+    # 如果启用了 BUILD_TEST，使用内置测试可执行文件 + ctest 注册
     
     # ========================================================================
     # client/
