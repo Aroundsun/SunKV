@@ -77,7 +77,15 @@ int main(int argc, char* argv[]) {
         }
         
         // 加载命令行参数（会覆盖配置文件中的设置）
-        config.loadFromArgs(argc, argv);
+        const auto args_result = config.loadFromArgs(argc, argv);
+        if (args_result == Config::LoadArgsResult::ShowHelp) {
+            config.printUsage();
+            return 0;
+        }
+        if (args_result == Config::LoadArgsResult::Error) {
+            LOG_ERROR("命令行参数解析失败");
+            return 1;
+        }
 
         // 构建类型相关的隐式默认值（仅在用户未显式设置时生效）
         config.applyBuildDefaults();

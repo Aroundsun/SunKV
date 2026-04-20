@@ -6,6 +6,11 @@
 // 配置类
 class Config {
 public:
+    enum class LoadArgsResult {
+        Ok,
+        ShowHelp,
+        Error,
+    };
     // 网络配置
     std::string host = "0.0.0.0";
     int port = 6379;
@@ -75,7 +80,7 @@ public:
     bool saveToFile(const std::string& filename) const;
     
     // 从命令行参数加载
-    void loadFromArgs(int argc, char* argv[]);
+    LoadArgsResult loadFromArgs(int argc, char* argv[]);
 
     // Debug 构建下的隐式默认值（仅在用户未通过文件/CLI 显式设置时生效）
     void applyBuildDefaults();

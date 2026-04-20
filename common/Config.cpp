@@ -283,7 +283,7 @@ bool Config::saveToFile(const std::string& filename) const {
     return true;
 }
 
-void Config::loadFromArgs(int argc, char* argv[]) {
+Config::LoadArgsResult Config::loadFromArgs(int argc, char* argv[]) {
     initSchemaDefaultsOnce();
 
     // 固定管线：default → config file(可选且只加载一次) → CLI
@@ -301,7 +301,10 @@ void Config::loadFromArgs(int argc, char* argv[]) {
         LOG_WARN("--config 出现多次（{} 次），将使用最后一次: {}", config_count, config_path);
     }
     if (!config_path.empty()) {
-        (void)loadFromFile(config_path);
+        if (!loadFromFile(config_path)) {
+            LOG_ERROR("命令行 --config 加载失败: {}", config_path);
+            return LoadArgsResult::Error;
+        }
     }
 
     for (int i = 1; i < argc; i++) {
@@ -312,8 +315,7 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             continue;
         }
         if (arg == "--help") {
-            printUsage();
-            exit(0);
+            return LoadArgsResult::ShowHelp;
         }
 
         auto fit = specByFlag().find(arg);
@@ -322,7 +324,7 @@ void Config::loadFromArgs(int argc, char* argv[]) {
         }
         if (i + 1 >= argc) {
             LOG_ERROR("Missing value for arg: {}", arg);
-            continue;
+            return LoadArgsResult::Error;
         }
         const char* v = argv[++i];
         const std::string value = v ? v : "";
@@ -331,6 +333,7 @@ void Config::loadFromArgs(int argc, char* argv[]) {
             log_level_from_cli = true;
         }
     }
+    return LoadArgsResult::Ok;
 }
 
 void Config::applyBuildDefaults() {
