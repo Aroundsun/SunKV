@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <unordered_map>
 #include "../network/Buffer.h"
@@ -21,20 +22,21 @@
 
 namespace {
 
-static sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy parseWalFlushPolicyString(const std::string& raw) {
-    std::string s = raw;
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
-        s.erase(s.begin());
+auto parseWalFlushPolicyString(const std::string& raw)
+    -> sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy {
+    std::string policy_string = raw;
+    std::transform(policy_string.begin(), policy_string.end(), policy_string.begin(),
+                   [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    while (!policy_string.empty() && (std::isspace(static_cast<unsigned char>(policy_string.front())) != 0)) {
+        policy_string.erase(policy_string.begin());
     }
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
-        s.pop_back();
+    while (!policy_string.empty() && (std::isspace(static_cast<unsigned char>(policy_string.back())) != 0)) {
+        policy_string.pop_back();
     }
-    if (s == "never") {
+    if (policy_string == "never") {
         return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Never;
     }
-    if (s == "always") {
+    if (policy_string == "always") {
         return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Always;
     }
     return sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy::Periodic;
@@ -44,16 +46,18 @@ static sunkv::storage2::PersistenceOrchestrator::Options::WalFlushPolicy parseWa
 
 // 全局服务器实例，用于信号处理
 static Server* g_server = nullptr;
-static int pipe_fds[2] = {-1, -1};
+// 管道文件描述符
+static std::array<int, 2> pipe_fds = {-1, -1};
 
 /**
  * @brief 信号处理函数
  */
 void signalHandler(int signal) {
-    if (g_server && pipe_fds[1] >= 0) {
+    if (g_server != nullptr && pipe_fds[1] >= 0) {
         // 信号处理函数中仅做异步信号安全操作：写管道通知
-        uint8_t sig = static_cast<uint8_t>(signal);
-        (void)!write(pipe_fds[1], &sig, sizeof(sig));
+        auto sig = static_cast<uint8_t>(signal);
+        const auto bytes_written = write(pipe_fds[1], &sig, sizeof(sig));
+        (void)bytes_written;
     }
 }
 
@@ -62,7 +66,7 @@ Server::Server(const Config& config)
       start_time_(std::chrono::steady_clock::now()) {
     
     // 创建管道用于信号处理
-    if (pipe(pipe_fds) == -1) {
+    if (pipe(pipe_fds.data()) == -1) {
         LOG_ERROR("pipe() 失败: {}", strerror(errno));
         return;
     }
@@ -88,7 +92,7 @@ Server::~Server() {
     close(pipe_fds[1]);
 }
 
-bool Server::start() {
+auto Server::start() -> bool {
     #ifdef DEBUG
 #endif
     LOG_INFO("正在启动 SunKV Server...");
@@ -146,13 +150,13 @@ bool Server::start() {
     signal_thread_ = std::thread([this]() {
         uint8_t sig = 0;
         while (signal_thread_running_.load()) {
-            ssize_t n = read(pipe_fds[0], &sig, sizeof(sig));
-            if (n == static_cast<ssize_t>(sizeof(sig))) {
+            ssize_t bytes_read = read(pipe_fds[0], &sig, sizeof(sig));
+            if (bytes_read == static_cast<ssize_t>(sizeof(sig))) {
                 if (!signal_thread_running_.load()) {
                     break;
                 }
                 this->requestStopFromSignal();
-            } else if (n < 0 && errno == EINTR) {
+            } else if (bytes_read < 0 && errno == EINTR) {
                 continue;
             }
         }
@@ -175,14 +179,14 @@ bool Server::start() {
     return true;
 }
 
-void Server::requestStopFromSignal() {
+auto Server::requestStopFromSignal() -> void {
     stopping_.store(true);
     if (main_loop_) {
         main_loop_->quit();
     }
 }
 
-void Server::advanceShutdown(ShutdownPhase target) {
+auto Server::advanceShutdown(ShutdownPhase target) -> void {
     int cur = shutdown_phase_.load();
     while (cur < static_cast<int>(target)) {
         if (shutdown_phase_.compare_exchange_weak(cur, cur + 1)) {
@@ -191,7 +195,7 @@ void Server::advanceShutdown(ShutdownPhase target) {
     }
 }
 
-void Server::stop() {
+auto Server::stop() -> void {
     LOG_DEBUG("进入 Server::stop()");
     LOG_INFO("调用 Server::stop()，running={}, stopping={}, phase={}",
              running_.load(), stopping_.load(), shutdown_phase_.load());
@@ -213,7 +217,8 @@ void Server::stop() {
         // 停止信号转发线程并唤醒阻塞中的 read
         if (signal_thread_running_.exchange(false)) {
             uint8_t wake = 0;
-            (void)!write(pipe_fds[1], &wake, sizeof(wake));
+            const auto bytes_written = write(pipe_fds[1], &wake, sizeof(wake));
+            (void)bytes_written;
         }
         if (signal_thread_.joinable()) {
             signal_thread_.join();
@@ -249,13 +254,14 @@ void Server::stop() {
     LOG_INFO("SunKV Server 已停止");
 }
 
-void Server::waitForStop() {
+auto Server::waitForStop() -> void {
+    constexpr int kWaitSleepMs = 100;
     while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kWaitSleepMs));
     }
 }
 
-Server::ServerStats Server::getStats() const {
+auto Server::getStats() const -> ServerStats {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     
     auto now = std::chrono::steady_clock::now();
@@ -270,7 +276,7 @@ Server::ServerStats Server::getStats() const {
     };
 }
 
-bool Server::initializeNetwork() {
+auto Server::initializeNetwork() -> bool {
     try {
         // 创建主事件循环
         main_loop_ = std::make_unique<EventLoop>();
@@ -301,14 +307,15 @@ bool Server::initializeNetwork() {
     }
 }
 
-bool Server::initializeStorage() {
+auto Server::initializeStorage() -> bool {
     try {
         // v2：使用 storage2::Factory 组装（Engine + 可选持久化 + 可选装饰器）
         sunkv::storage2::Storage2WiringOptions opt;
 
+        constexpr size_t kBytesPerMb = static_cast<size_t>(1024U) * static_cast<size_t>(1024U);
         opt.max_storage_bytes = config_.max_memory_mb <= 0
-                                    ? 0u
-                                    : static_cast<size_t>(config_.max_memory_mb) * 1024u * 1024u;
+                                    ? 0U
+                                    : static_cast<size_t>(config_.max_memory_mb) * kBytesPerMb;
 
         // persistence
         opt.enable_wal = config_.enable_wal;
@@ -317,7 +324,7 @@ bool Server::initializeStorage() {
         opt.wal_flush_policy = parseWalFlushPolicyString(config_.wal_flush_policy);
         opt.wal_flush_interval_ms = config_.wal_sync_interval_ms;
         opt.wal_async = config_.wal_async;
-        opt.wal_max_queue = config_.wal_max_queue <= 0 ? 1u : static_cast<size_t>(config_.wal_max_queue);
+        opt.wal_max_queue = config_.wal_max_queue <= 0 ? 1U : static_cast<size_t>(config_.wal_max_queue);
         opt.wal_group_commit_linger_ms = config_.wal_group_commit_linger_ms;
         opt.wal_group_commit_max_mutations =
             static_cast<size_t>(std::max(1, config_.wal_group_commit_max_mutations));
@@ -331,7 +338,7 @@ bool Server::initializeStorage() {
         std::filesystem::create_directories(config_.snapshot_dir);
 
         storage2_ = sunkv::storage2::createStorage2(opt);
-        if (!storage2_.api || !storage2_.engine) {
+        if (storage2_.api == nullptr || storage2_.engine == nullptr) {
             LOG_ERROR("storage2 组装失败：api/engine 为空");
             return false;
         }
@@ -352,12 +359,12 @@ bool Server::initializeStorage() {
     }
 }
 
-bool Server::create_multi_type_snapshot() {
+auto Server::create_multi_type_snapshot() const -> bool {
     try {
         if (storage2_.orchestrator) {
             return storage2_.orchestrator->takeSnapshotNow();
         }
-        if (!storage2_.engine) {
+        if (storage2_.engine == nullptr) {
             return false;
         }
         const std::string snapshot_path = config_.snapshot_dir + "/snapshot2.bin";
@@ -370,7 +377,7 @@ bool Server::create_multi_type_snapshot() {
 }
 
 // 设置连接回调
-void Server::setupConnectionCallbacks() {
+auto Server::setupConnectionCallbacks() -> void {
     if (!tcp_server_) {
         return;
     }
@@ -396,7 +403,7 @@ void Server::setupConnectionCallbacks() {
     LOG_INFO("连接回调设置成功");
 }
 
-void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
+auto Server::onConnection(const std::shared_ptr<TcpConnection>& conn) -> void {
     if (conn->connected()) {
     total_connections_.fetch_add(1);
     current_connections_.fetch_add(1);
@@ -411,7 +418,7 @@ void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
 
         // 清理该连接的输入残留缓冲，避免长时间运行导致 map 增长
         {
-            std::lock_guard<std::mutex> lk{conn_inbuf_mu_};
+            std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
             conn_inbuf_.erase(conn->name());
         }
     }
@@ -419,7 +426,7 @@ void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
     updateStats();
 }
 
-void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
+auto Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) -> void {
     try {
         // 说明：
         // - Buffer::retrieveAsString(len) 会“消费”输入缓冲；
@@ -431,7 +438,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         std::shared_ptr<ConnParseState> ctx;
         {
             // 锁住连接的输入缓冲
-            std::lock_guard<std::mutex> lk{conn_inbuf_mu_};
+            std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
             // 获取连接的输入缓冲
             auto& slot = conn_inbuf_[conn->name()];
             // 如果连接的输入缓冲不存在，则创建一个
@@ -444,21 +451,37 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
         }
         // 将数据添加到连接的输入缓冲
         ctx->pending_input.append(chunk);
+        const auto pendingReadableBytes = [&ctx]() -> size_t {
+            if (ctx->pending_offset >= ctx->pending_input.size()) {
+                return 0;
+            }
+            return ctx->pending_input.size() - ctx->pending_offset;
+        };
 
         // 防御：避免恶意/异常客户端持续喂垃圾导致内存膨胀
         const size_t kMaxConnInbufBytes =
-            static_cast<size_t>(std::max(1, config_.max_conn_input_buffer_mb)) * 1024u * 1024u;
-        if (ctx->pending_input.size() > kMaxConnInbufBytes) {
+            static_cast<size_t>(std::max(1, config_.max_conn_input_buffer_mb)) * 1024U * 1024U;
+        if (pendingReadableBytes() > kMaxConnInbufBytes) {
             auto error_resp = RESPSerializer::serializeError("Input buffer overflow");
             conn->send(error_resp.data(), error_resp.size());
             conn->forceClose();
             return;
         }
 
+        struct WriteCoalescingScope final {
+            explicit WriteCoalescingScope(const std::shared_ptr<TcpConnection>& connection) : conn(connection) {
+                conn->beginWriteCoalescing();
+            }
+            ~WriteCoalescingScope() { conn->endWriteCoalescing(); }
+            std::shared_ptr<TcpConnection> conn;
+        } write_scope(conn);
+
         // 增量解析：pending_input 可能包含多条命令，也可能尾部是不完整命令。
-        while (!ctx->pending_input.empty()) {
+        while (ctx->pending_offset < ctx->pending_input.size()) {
+            std::string_view unread{ctx->pending_input.data() + ctx->pending_offset,
+                                    ctx->pending_input.size() - ctx->pending_offset};
             const size_t before = ctx->parser.getProcessedBytes();
-            auto result = ctx->parser.parse(ctx->pending_input);
+            auto result = ctx->parser.parse(unread);
 
             if (!result.success) {
                 // RESP 解析错误
@@ -471,7 +494,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             const size_t after = result.processed_bytes;
             const size_t consumed = after >= before ? (after - before) : 0;
             if (consumed > 0) {
-                ctx->pending_input.erase(0, consumed);
+                ctx->pending_offset += consumed;
             }
 
             if (result.complete && result.value) {
@@ -498,8 +521,21 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             }
         }
 
+        // 仅在必要时做一次压缩，避免每条命令都触发前删搬移。
+        if (ctx->pending_offset >= ctx->pending_input.size()) {
+            ctx->pending_input.clear();
+            ctx->pending_offset = 0;
+        } else {
+            constexpr size_t kCompactMinBytes = static_cast<size_t>(4) * static_cast<size_t>(1024);
+            if (ctx->pending_offset >= kCompactMinBytes &&
+                ctx->pending_offset * 2 >= ctx->pending_input.size()) {
+                ctx->pending_input.erase(0, ctx->pending_offset);
+                ctx->pending_offset = 0;
+            }
+        }
+
         // 二次防御：防止异常路径把 pending 长期留大。
-        if (ctx->pending_input.size() > kMaxConnInbufBytes) {
+        if (pendingReadableBytes() > kMaxConnInbufBytes) {
             auto error_resp = RESPSerializer::serializeError("Input buffer overflow");
             conn->send(error_resp.data(), error_resp.size());
             conn->forceClose();
@@ -514,20 +550,20 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
     updateStats();
 }
 
-void Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) {
+auto Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) -> void {
     (void)conn;
     // 当前连接统计已在 onConnection(conn->connected()==false) 路径中处理
     updateStats();
 }
 
-bool Server::dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
-                                  const std::string& cmd_name,
-                                  const std::vector<RESPValue::Ptr>& cmd_array) {
+auto Server::dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
+                                   const std::string& cmd_name,
+                                   const std::vector<RESPValue::Ptr>& cmd_array) -> bool {
     return dispatchArrayCommandsLookup(*this, conn, cmd_name, cmd_array);
 }
 
-void Server::processCommand(const std::shared_ptr<TcpConnection>& conn, 
-                        const RESPValue::Ptr& command) {
+auto Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
+                            const RESPValue::Ptr& command) -> void {
     if (!command) {
         auto error = RESPSerializer::serializeError("Invalid command");
         conn->send(error.data(), error.size());
@@ -540,8 +576,8 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
         if (command->getType() == RESPType::ARRAY) {
             // 获取命令的数组值
             auto* array_value = static_cast<RESPArray*>(command.get());
-            if (array_value && array_value->size() > 0) {
-                auto& cmd_array = array_value->getValues();
+            if (array_value != nullptr && array_value->size() > 0) {
+                const auto& cmd_array = array_value->getValues();
                 // 如果命令的数组值不为空，则获取命令的第一个值
                 if (cmd_array[0] && cmd_array[0]->getType() == RESPType::BULK_STRING) {
                     // 获取命令的第一个值
@@ -549,7 +585,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     std::string cmd_name = bulk_string->getValue();
                     // 将命令的名称转换为大写
                     std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(),
-                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                                   [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
                     // 分发命令
                     if (dispatchArrayCommand_(conn, cmd_name, cmd_array)) {
                         return;
@@ -561,7 +597,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
         // 处理简单字符串命令
         if (command->getType() == RESPType::SIMPLE_STRING) {
             auto* simple_string = static_cast<RESPSimpleString*>(command.get());
-            if (simple_string) {
+            if (simple_string != nullptr) {
                 std::string cmd = simple_string->toString();
                 
                 if (cmd == "PING") {
@@ -582,7 +618,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
     }
 }
 
-void Server::ttlCleanupThread() {
+auto Server::ttlCleanupThread() -> void {
     
     while (ttl_cleanup_running_) {
         try {
@@ -597,26 +633,32 @@ void Server::ttlCleanupThread() {
     
 }
 
-void Server::cleanupExpiredKeys() {
+auto Server::cleanupExpiredKeys() -> void {
     // v2：过期语义主要依赖惰性删除；这里保留后台线程，但只做轻量触发式清理（遍历 keys 并触发一次 pttl）。
-    if (!storage2_.api) return;
-    auto ks = storage2_.api->keys();
-    if (ks.status != sunkv::storage2::StatusCode::Ok) return;
-    for (const auto& k : ks.value) {
-        auto t = storage2_.api->pttl(k);
-        if (t.status == sunkv::storage2::StatusCode::Ok && t.value == -2) {
+    if (!storage2_.api) {
+        return;
+    }
+    auto keys_result = storage2_.api->keys();
+    if (keys_result.status != sunkv::storage2::StatusCode::Ok) {
+        return;
+    }
+    for (const auto& key : keys_result.value) {
+        auto ttl_result = storage2_.api->pttl(key);
+        if (ttl_result.status == sunkv::storage2::StatusCode::Ok && ttl_result.value == -2) {
             expired_keys_cleaned_.fetch_add(1);
         }
     }
 }
 
-std::string Server::buildStatsReport() {
+auto Server::buildStatsReport() -> std::string {
     std::ostringstream oss;
     auto stats = getStats();
     size_t kv_size = 0;
     if (storage2_.api) {
-        auto r = storage2_.api->dbsize();
-        if (r.status == sunkv::storage2::StatusCode::Ok) kv_size = static_cast<size_t>(r.value);
+        auto dbsize_result = storage2_.api->dbsize();
+        if (dbsize_result.status == sunkv::storage2::StatusCode::Ok) {
+            kv_size = static_cast<size_t>(dbsize_result.value);
+        }
     }
 
     auto pool_stats = ThreadLocalBufferPool::instance().getStats();
@@ -635,7 +677,7 @@ std::string Server::buildStatsReport() {
     return oss.str();
 }
 
-void Server::statsReportThread() {
+auto Server::statsReportThread() -> void {
     const int interval = std::max(1, config_.stats_log_interval_seconds);
     while (stats_report_running_.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(interval));
@@ -646,7 +688,7 @@ void Server::statsReportThread() {
     }
 }
 
-void Server::gracefulShutdown() {
+auto Server::gracefulShutdown() -> void {
     LOG_INFO("开始执行优雅关闭...");
     LOG_DEBUG("gracefulShutdown() 已启动");
     
@@ -667,17 +709,19 @@ void Server::gracefulShutdown() {
     }
     
     // 3. 等待所有连接关闭（最多等待30秒）
+    constexpr int kWaitLogEvery = 10;
+    constexpr int kWaitSleepMs = 100;
     int wait_count = 0;
     const int max_wait_count = 300; // 30秒，每次100ms
     LOG_DEBUG("等待连接关闭, current={}", current_connections_.load());
     while (current_connections_.load() > 0 && wait_count < max_wait_count) {
-        if (wait_count % 10 == 0) {
+        if (wait_count % kWaitLogEvery == 0) {
             LOG_INFO("等待 {} 个连接关闭... ({}/30s)", 
-                 current_connections_.load(), wait_count / 10);
+                 current_connections_.load(), wait_count / kWaitLogEvery);
         }
         LOG_DEBUG("继续等待, connections={}, count={}",
                   current_connections_.load(), wait_count);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kWaitSleepMs));
         wait_count++;
     }
     
@@ -698,7 +742,7 @@ void Server::gracefulShutdown() {
     }
     
     // 5. 创建最终快照（storage2）：须先于 WAL flush，恢复顺序为 recoverInto 先读快照再回放 WAL。
-    if (storage2_.engine) {
+    if (storage2_.engine != nullptr) {
         LOG_INFO("正在创建最终快照...");
         LOG_DEBUG("正在创建最终快照...");
         if (create_multi_type_snapshot()) {
@@ -725,7 +769,7 @@ void Server::gracefulShutdown() {
     LOG_DEBUG("gracefulShutdown() 完成");
 }
 
-void Server::updateStats() {
+auto Server::updateStats() -> void {
     // 这里可以定期更新统计信息
     // 比如计算 QPS、内存使用等
 }

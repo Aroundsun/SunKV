@@ -115,6 +115,31 @@ void TcpConnection::send(Buffer* buffer) {
     }
 }
 
+void TcpConnection::beginWriteCoalescing() {
+    if (loop_->isInLoopThread()) {
+        write_coalescing_ = true;
+        return;
+    }
+    loop_->runInLoop([this]() { write_coalescing_ = true; });
+}
+
+void TcpConnection::endWriteCoalescing() {
+    auto flush = [this]() {
+        write_coalescing_ = false;
+        if (state_ != TcpConnectionState::kConnected) {
+            return;
+        }
+        if (outputBuffer_.readableBytes() > 0 && !channel_->isWriting()) {
+            channel_->enableWriting();
+        }
+    };
+    if (loop_->isInLoopThread()) {
+        flush();
+        return;
+    }
+    loop_->runInLoop(flush);
+}
+
 void TcpConnection::sendInLoop(const std::string& message) {
     sendInLoop(message.data(), message.size());
 }
@@ -128,6 +153,17 @@ void TcpConnection::sendInLoop(const void* data, size_t len) {
 
     if (state_ == TcpConnectionState::kDisconnected) {
         LOG_WARN("TcpConnection::sendInLoop() 连接已断开，放弃写入");
+        return;
+    }
+
+    if (write_coalescing_) {
+        if (len > 0) {
+            outputBuffer_.append(bytes, len);
+            if (!channel_->isWriting()) {
+                channel_->enableWriting();
+            }
+            (void)enforceOutputBackpressure_();
+        }
         return;
     }
 

@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <functional>
 #include "Buffer.h"
 
 /// 前向声明
@@ -116,6 +117,10 @@ public:
      * @param buffer 缓冲区指针
      */
     void send(Buffer* buffer);
+
+    /// 开启/结束写聚合：用于 pipeline 场景把多条小响应合并到输出缓冲后统一发送。
+    void beginWriteCoalescing();
+    void endWriteCoalescing();
     
     /**
      * @brief 优雅关闭连接
@@ -198,6 +203,7 @@ private:
     
     Buffer inputBuffer_;                                 ///< 输入缓冲区
     Buffer outputBuffer_;                                ///< 输出缓冲区
+    bool write_coalescing_{false};                       ///< 是否启用写聚合
     static constexpr size_t kHighWaterMarkBytes_ = 8 * 1024 * 1024; ///< 输出高水位
     
     ConnectionCallback connectionCallback_;               ///< 连接回调
