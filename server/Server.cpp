@@ -12,6 +12,7 @@
 #include <array>
 #include <cctype>
 #include <unordered_map>
+#include <string_view>
 #include "../network/Buffer.h"
 #include "../common/MemoryPool.h"
 #include "../protocol/RESPSerializer.h"
@@ -92,7 +93,7 @@ Server::~Server() {
     close(pipe_fds[1]);
 }
 
-auto Server::start() -> bool {
+bool Server::start() {
     #ifdef DEBUG
 #endif
     LOG_INFO("正在启动 SunKV Server...");
@@ -179,14 +180,14 @@ auto Server::start() -> bool {
     return true;
 }
 
-auto Server::requestStopFromSignal() -> void {
+void Server::requestStopFromSignal() {
     stopping_.store(true);
     if (main_loop_) {
         main_loop_->quit();
     }
 }
 
-auto Server::advanceShutdown(ShutdownPhase target) -> void {
+void Server::advanceShutdown(ShutdownPhase target) {
     int cur = shutdown_phase_.load();
     while (cur < static_cast<int>(target)) {
         if (shutdown_phase_.compare_exchange_weak(cur, cur + 1)) {
@@ -195,7 +196,7 @@ auto Server::advanceShutdown(ShutdownPhase target) -> void {
     }
 }
 
-auto Server::stop() -> void {
+void Server::stop() {
     LOG_DEBUG("进入 Server::stop()");
     LOG_INFO("调用 Server::stop()，running={}, stopping={}, phase={}",
              running_.load(), stopping_.load(), shutdown_phase_.load());
@@ -254,14 +255,14 @@ auto Server::stop() -> void {
     LOG_INFO("SunKV Server 已停止");
 }
 
-auto Server::waitForStop() -> void {
+void Server::waitForStop() {
     constexpr int kWaitSleepMs = 100;
     while (running_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(kWaitSleepMs));
     }
 }
 
-auto Server::getStats() const -> ServerStats {
+Server::ServerStats Server::getStats() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     
     auto now = std::chrono::steady_clock::now();
@@ -276,7 +277,7 @@ auto Server::getStats() const -> ServerStats {
     };
 }
 
-auto Server::initializeNetwork() -> bool {
+bool Server::initializeNetwork() {
     try {
         // 创建主事件循环
         main_loop_ = std::make_unique<EventLoop>();
@@ -307,7 +308,7 @@ auto Server::initializeNetwork() -> bool {
     }
 }
 
-auto Server::initializeStorage() -> bool {
+bool Server::initializeStorage() {
     try {
         // v2：使用 storage2::Factory 组装（Engine + 可选持久化 + 可选装饰器）
         sunkv::storage2::Storage2WiringOptions opt;
@@ -359,7 +360,7 @@ auto Server::initializeStorage() -> bool {
     }
 }
 
-auto Server::create_multi_type_snapshot() const -> bool {
+bool Server::create_multi_type_snapshot() const {
     try {
         if (storage2_.orchestrator) {
             return storage2_.orchestrator->takeSnapshotNow();
@@ -377,7 +378,7 @@ auto Server::create_multi_type_snapshot() const -> bool {
 }
 
 // 设置连接回调
-auto Server::setupConnectionCallbacks() -> void {
+void Server::setupConnectionCallbacks() {
     if (!tcp_server_) {
         return;
     }
@@ -403,7 +404,7 @@ auto Server::setupConnectionCallbacks() -> void {
     LOG_INFO("连接回调设置成功");
 }
 
-auto Server::onConnection(const std::shared_ptr<TcpConnection>& conn) -> void {
+void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
     if (conn->connected()) {
     total_connections_.fetch_add(1);
     current_connections_.fetch_add(1);
@@ -426,7 +427,7 @@ auto Server::onConnection(const std::shared_ptr<TcpConnection>& conn) -> void {
     updateStats();
 }
 
-auto Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) -> void {
+void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) {
     try {
         // 说明：
         // - Buffer::retrieveAsString(len) 会“消费”输入缓冲；
@@ -498,7 +499,7 @@ auto Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             }
 
             if (result.complete && result.value) {
-                processCommand(conn, result.value);
+                processCommand(conn, ctx, result.value);
 
                 total_commands_.fetch_add(1);
                 total_operations_.fetch_add(1);
@@ -550,20 +551,21 @@ auto Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
     updateStats();
 }
 
-auto Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) -> void {
+void Server::onDisconnection(const std::shared_ptr<TcpConnection>& conn) {
     (void)conn;
     // 当前连接统计已在 onConnection(conn->connected()==false) 路径中处理
     updateStats();
 }
 
-auto Server::dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
+bool Server::dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
                                    const std::string& cmd_name,
-                                   const std::vector<RESPValue::Ptr>& cmd_array) -> bool {
+                                   const std::vector<RESPValue::Ptr>& cmd_array) {
     return dispatchArrayCommandsLookup(*this, conn, cmd_name, cmd_array);
 }
 
-auto Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
-                            const RESPValue::Ptr& command) -> void {
+void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
+                            const std::shared_ptr<Server::ConnParseState>& ctx,
+                            const RESPValue::Ptr& command) {
     if (!command) {
         auto error = RESPSerializer::serializeError("Invalid command");
         conn->send(error.data(), error.size());
@@ -586,6 +588,66 @@ auto Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     // 将命令的名称转换为大写
                     std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(),
                                    [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+
+                    if (cmd_name == "WATCH" || cmd_name == "UNWATCH") {
+                        auto err = RESPSerializer::serializeError("ERR WATCH/UNWATCH is not supported");
+                        conn->send(err.data(), err.size());
+                        return;
+                    }
+
+                    // 事务控制命令：MULTI / EXEC / DISCARD
+                    if (cmd_name == "MULTI") {
+                        if (ctx && ctx->in_multi) {
+                            auto err = RESPSerializer::serializeError("ERR MULTI calls can not be nested");
+                            conn->send(err.data(), err.size());
+                            return;
+                        }
+                        if (ctx) {
+                            ctx->in_multi = true;
+                            ctx->queued_commands.clear();
+                        }
+                        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+                        return;
+                    }
+                    if (cmd_name == "DISCARD") {
+                        if (!ctx || !ctx->in_multi) {
+                            auto err = RESPSerializer::serializeError("ERR DISCARD without MULTI");
+                            conn->send(err.data(), err.size());
+                            return;
+                        }
+                        ctx->in_multi = false;
+                        ctx->queued_commands.clear();
+                        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+                        return;
+                    }
+                    if (cmd_name == "EXEC") {
+                        if (!ctx || !ctx->in_multi) {
+                            auto err = RESPSerializer::serializeError("ERR EXEC without MULTI");
+                            conn->send(err.data(), err.size());
+                            return;
+                        }
+
+                        std::string out = "*" + std::to_string(ctx->queued_commands.size()) + "\r\n";
+                        for (const auto& q : ctx->queued_commands) {
+                            out += executeArrayCommandToResp(*this, q.cmd_name, q.cmd_array);
+                        }
+                        ctx->in_multi = false;
+                        ctx->queued_commands.clear();
+                        conn->send(out.data(), out.size());
+                        return;
+                    }
+
+                    // 事务态：非控制命令入队并返回 +QUEUED
+                    if (ctx && ctx->in_multi) {
+                        ConnParseState::QueuedCommand q;
+                        q.cmd_name = cmd_name;
+                        q.cmd_array = cmd_array;
+                        ctx->queued_commands.push_back(std::move(q));
+                        static constexpr std::string_view kQueued = "+QUEUED\r\n";
+                        conn->send(kQueued.data(), kQueued.size());
+                        return;
+                    }
+
                     // 分发命令
                     if (dispatchArrayCommand_(conn, cmd_name, cmd_array)) {
                         return;
@@ -618,7 +680,7 @@ auto Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
     }
 }
 
-auto Server::ttlCleanupThread() -> void {
+void Server::ttlCleanupThread() {
     
     while (ttl_cleanup_running_) {
         try {
@@ -633,7 +695,7 @@ auto Server::ttlCleanupThread() -> void {
     
 }
 
-auto Server::cleanupExpiredKeys() -> void {
+void Server::cleanupExpiredKeys() {
     // v2：过期语义主要依赖惰性删除；这里保留后台线程，但只做轻量触发式清理（遍历 keys 并触发一次 pttl）。
     if (!storage2_.api) {
         return;
@@ -650,7 +712,7 @@ auto Server::cleanupExpiredKeys() -> void {
     }
 }
 
-auto Server::buildStatsReport() -> std::string {
+std::string Server::buildStatsReport() {
     std::ostringstream oss;
     auto stats = getStats();
     size_t kv_size = 0;
@@ -677,7 +739,7 @@ auto Server::buildStatsReport() -> std::string {
     return oss.str();
 }
 
-auto Server::statsReportThread() -> void {
+void Server::statsReportThread() {
     const int interval = std::max(1, config_.stats_log_interval_seconds);
     while (stats_report_running_.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(interval));
@@ -688,7 +750,7 @@ auto Server::statsReportThread() -> void {
     }
 }
 
-auto Server::gracefulShutdown() -> void {
+void Server::gracefulShutdown() {
     LOG_INFO("开始执行优雅关闭...");
     LOG_DEBUG("gracefulShutdown() 已启动");
     
@@ -769,7 +831,7 @@ auto Server::gracefulShutdown() -> void {
     LOG_DEBUG("gracefulShutdown() 完成");
 }
 
-auto Server::updateStats() -> void {
+void Server::updateStats() {
     // 这里可以定期更新统计信息
     // 比如计算 QPS、内存使用等
 }

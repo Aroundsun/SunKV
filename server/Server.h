@@ -48,23 +48,23 @@ public:
      * @brief 启动服务器
      * @return 是否启动成功
      */
-    auto start() -> bool;
+    bool start();
     
     /**
      * @brief 停止服务器
      */
-    auto stop() -> void;
+    void stop();
     
     /**
      * @brief 检查服务器是否正在运行
      * @return 运行状态
      */
-    auto isRunning() const -> bool { return running_.load(); }
+    bool isRunning() const { return running_.load(); }
     
     /**
      * @brief 等待服务器停止
      */
-    auto waitForStop() -> void;
+    void waitForStop();
     
     /**
      * @brief 获取服务器统计信息
@@ -77,31 +77,33 @@ public:
         uint64_t uptime_seconds;
     };
     
-    auto getStats() const -> ServerStats;
+    ServerStats getStats() const;
     
     /**
      * @brief 设置停止标志（用于信号处理）
      */
-    auto setStopping() -> void { stopping_.store(true); }
+    void setStopping() { stopping_.store(true); }
     
     /**
      * @brief 检查服务器是否停止
      */
-    auto isStopping() const -> bool { return stopping_.load(); }
+    bool isStopping() const { return stopping_.load(); }
 
     /// EXPIRE 等命令使用的最大 TTL（秒）
-    auto maxTtlSeconds() const -> int { return config_.max_ttl_seconds; }
+    int maxTtlSeconds() const { return config_.max_ttl_seconds; }
     
     /**
      * @brief 停止主事件循环（用于信号处理）
      */
-    auto stopMainLoop() -> void {
+    void stopMainLoop() {
         if (main_loop_) {
             main_loop_->quit();
         }
     }
 
 private:
+    struct ConnParseState;
+
     enum class ShutdownPhase : std::uint8_t {
         NotStarted = 0,
         Requested = 1,
@@ -110,86 +112,87 @@ private:
         Completed = 4,
     };
 
-    auto requestStopFromSignal() -> void;
-    auto advanceShutdown(ShutdownPhase target) -> void;
+    void requestStopFromSignal();
+    void advanceShutdown(ShutdownPhase target);
 
     /**
      * @brief 初始化网络层
      */
-    auto initializeNetwork() -> bool;
+    bool initializeNetwork();
     
     /**
      * @brief 初始化存储层
      */
-    auto initializeStorage() -> bool;
+    bool initializeStorage();
     
     /**
      * @brief 创建多数据类型快照
      */
-    auto create_multi_type_snapshot() const -> bool;
+    bool create_multi_type_snapshot() const;
     
 
     
     /**
      * @brief 设置连接回调
      */
-    auto setupConnectionCallbacks() -> void;
+    void setupConnectionCallbacks();
     
     /**
      * @brief 连接建立回调
      */
-    auto onConnection(const std::shared_ptr<TcpConnection>& conn) -> void;
+    void onConnection(const std::shared_ptr<TcpConnection>& conn);
     
     /**
      * @brief 消息接收回调
      */
-    auto onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len) -> void;
+    void onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, size_t len);
     
     /**
      * @brief 连接关闭回调
      */
-    auto onDisconnection(const std::shared_ptr<TcpConnection>& conn) -> void;
+    void onDisconnection(const std::shared_ptr<TcpConnection>& conn);
     
     /**
      * @brief 处理 RESP 命令
      */
-    auto processCommand(const std::shared_ptr<TcpConnection>& conn,
-                        const RESPValue::Ptr& command) -> void;
+    void processCommand(const std::shared_ptr<TcpConnection>& conn,
+                        const std::shared_ptr<ConnParseState>& ctx,
+                        const RESPValue::Ptr& command);
     /**
      * @brief 优雅关闭服务器
      */
-    auto gracefulShutdown() -> void;
+    void gracefulShutdown();
     
     /**
      * @brief 更新统计信息
      */
-    auto updateStats() -> void;
+    void updateStats();
     
     /**
      * @brief TTL 清理线程函数
      */
-    auto ttlCleanupThread() -> void;
+    void ttlCleanupThread();
     
     /**
      * @brief 清理过期的键
      */
-    auto cleanupExpiredKeys() -> void;
+    void cleanupExpiredKeys();
     
     /**
      * @brief 周期统计日志线程函数
      */
-    auto statsReportThread() -> void;
+    void statsReportThread();
 
     
     /**
      * @brief 构建统计信息文本
      */
-    auto buildStatsReport() -> std::string;
+    std::string buildStatsReport();
 
     /// RESP 数组命令表驱动（首参数为命令名）；返回 true 表示已处理。
-    auto dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
+    bool dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
                                const std::string& cmd_name,
-                               const std::vector<RESPValue::Ptr>& cmd_array) -> bool;
+                               const std::vector<RESPValue::Ptr>& cmd_array);
 
     Config config_;                    // 配置对象
     std::unique_ptr<EventLoop> main_loop_;              // 主事件循环
@@ -200,6 +203,13 @@ private:
         std::string pending_input;        // 连接的输入缓冲
         size_t pending_offset{0};         // 已消费偏移（避免频繁 erase(0, n)）
         RESPParser parser;                // 连接的解析器
+
+        struct QueuedCommand {
+            std::string cmd_name;                 // 大写命令名
+            std::vector<RESPValue::Ptr> cmd_array; // 原始数组（含命令名参数）
+        };
+        bool in_multi{false};
+        std::vector<QueuedCommand> queued_commands;
     };
 
     // 每连接解析上下文：持有残留输入与可复用 RESPParser，避免每条命令重复构造解析器。

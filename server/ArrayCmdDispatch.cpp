@@ -16,10 +16,20 @@ struct ArrayCmdDispatchCtx {
     Server& server;
     std::shared_ptr<TcpConnection> conn;
     const std::vector<RESPValue::Ptr>& cmd_array;
+    std::string* out_resp{nullptr}; 
+
+    void writeResp(const char* data, size_t len) const {
+        if (out_resp != nullptr) {
+            out_resp->append(data, len);
+            return;
+        }
+        conn->send(data, len);
+    }
+    void writeResp(const std::string& s) const { writeResp(s.data(), s.size()); }
 
     void send_wrongtype() const {
         auto error = RESPSerializer::serializeError("WRONGTYPE Operation against a key holding the wrong kind of value");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
     }
     bool require_bulk(size_t idx) const {
         return idx < cmd_array.size() && cmd_array[idx] && cmd_array[idx]->getType() == RESPType::BULK_STRING;
@@ -65,27 +75,27 @@ struct ArrayCmdDispatchCtx {
 
 bool ArrayCmdDispatchCtx::cmdPing() {
     if (cmd_array.size() != 1) return false;
-    conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
+    writeResp(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHealth() {
     if (cmd_array.size() != 1) return false;
     bool healthy = server.isRunning() && !server.isStopping();
     if (healthy) {
-        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+        writeResp(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
     } else {
         auto err = RESPSerializer::serializeError("UNHEALTHY");
-        conn->send(err.data(), err.size());
+        writeResp(err.data(), err.size());
     }
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSnapshot() {
     if (cmd_array.size() != 1) return false;
     if (server.create_multi_type_snapshot()) {
-        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+        writeResp(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
     } else {
         auto error = RESPSerializer::serializeError("Snapshot creation failed");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
     }
     return true;
 }
@@ -97,7 +107,7 @@ bool ArrayCmdDispatchCtx::cmdDbsize() {
         if (r.status == sunkv::storage2::StatusCode::Ok) size = r.value;
     }
     auto response = RESPSerializer::serializeInteger(size);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdFlushall() {
@@ -111,19 +121,19 @@ bool ArrayCmdDispatchCtx::cmdFlushall() {
             server.storage2_.orchestrator->submit({m});
         }
     }
-    conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+    writeResp(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdMonitor() {
     if (cmd_array.size() != 1) return false;
     auto resp = RESPSerializer::serializeBulkString(server.buildStatsReport());
-    conn->send(resp.data(), resp.size());
+    writeResp(resp.data(), resp.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdStats() {
     if (cmd_array.size() != 1) return false;
     auto resp = RESPSerializer::serializeBulkString(server.buildStatsReport());
-    conn->send(resp.data(), resp.size());
+    writeResp(resp.data(), resp.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSet() {
@@ -135,11 +145,11 @@ bool ArrayCmdDispatchCtx::cmdSet() {
         auto r = server.storage2_.api->set(key, value);
         if (r.status == sunkv::storage2::StatusCode::QuotaExceeded) {
             auto err = RESPSerializer::serializeError("OOM maxmemory");
-            conn->send(err.data(), err.size());
+            writeResp(err.data(), err.size());
             return true;
         }
     }
-    conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+    writeResp(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdGet() {
@@ -147,16 +157,16 @@ bool ArrayCmdDispatchCtx::cmdGet() {
     if (!require_bulk(1)) return false;
     std::string key = bulk_value(1);
     if (!server.storage2_.api) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto r = server.storage2_.api->get(key);
     if (r.status != sunkv::storage2::StatusCode::Ok || !r.value.has_value()) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto response = RESPSerializer::serializeBulkString(*r.value);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdDel() {
@@ -174,7 +184,7 @@ bool ArrayCmdDispatchCtx::cmdDel() {
         }
     }
     auto response = RESPSerializer::serializeInteger(deleted_count);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdExists() {
@@ -192,13 +202,13 @@ bool ArrayCmdDispatchCtx::cmdExists() {
         }
     }
     auto response = RESPSerializer::serializeInteger(exists_count);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdDebug() {
     if (cmd_array.size() < 2 || !cmd_array[1] || cmd_array[1]->getType() != RESPType::BULK_STRING) {
         auto err = RESPSerializer::serializeError("ERR wrong number of arguments for 'DEBUG' command");
-        conn->send(err.data(), err.size());
+        writeResp(err.data(), err.size());
         return true;
     }
     auto* subcmd_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
@@ -207,16 +217,16 @@ bool ArrayCmdDispatchCtx::cmdDebug() {
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     if (subcmd == "INFO") {
         auto resp = RESPSerializer::serializeBulkString(server.buildStatsReport());
-        conn->send(resp.data(), resp.size());
+        writeResp(resp.data(), resp.size());
         return true;
     }
     if (subcmd == "RESETSTATS") {
         ThreadLocalBufferPool::instance().resetStats();
-        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+        writeResp(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
         return true;
     }
     auto err = RESPSerializer::serializeError("ERR unknown DEBUG subcommand");
-    conn->send(err.data(), err.size());
+    writeResp(err.data(), err.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdKeys() {
@@ -232,7 +242,7 @@ bool ArrayCmdDispatchCtx::cmdKeys() {
     for (const auto& key : keys) {
         keys_array += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
     }
-    conn->send(keys_array.data(), keys_array.size());
+    writeResp(keys_array.data(), keys_array.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdLpush() {
@@ -257,7 +267,7 @@ bool ArrayCmdDispatchCtx::cmdLpush() {
     }
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->lpush(key, values);
@@ -266,7 +276,7 @@ bool ArrayCmdDispatchCtx::cmdLpush() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdRpush() {
@@ -284,7 +294,7 @@ bool ArrayCmdDispatchCtx::cmdRpush() {
     }
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->rpush(key, values);
@@ -293,7 +303,7 @@ bool ArrayCmdDispatchCtx::cmdRpush() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdLpop() {
@@ -302,7 +312,7 @@ bool ArrayCmdDispatchCtx::cmdLpop() {
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto r = server.storage2_.api->lpop(key);
@@ -311,11 +321,11 @@ bool ArrayCmdDispatchCtx::cmdLpop() {
         return true;
     }
     if (r.status != sunkv::storage2::StatusCode::Ok || !r.value.has_value()) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto response = RESPSerializer::serializeBulkString(*r.value);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdRpop() {
@@ -324,7 +334,7 @@ bool ArrayCmdDispatchCtx::cmdRpop() {
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto r = server.storage2_.api->rpop(key);
@@ -333,11 +343,11 @@ bool ArrayCmdDispatchCtx::cmdRpop() {
         return true;
     }
     if (r.status != sunkv::storage2::StatusCode::Ok || !r.value.has_value()) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto response = RESPSerializer::serializeBulkString(*r.value);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdLlen() {
@@ -347,7 +357,7 @@ bool ArrayCmdDispatchCtx::cmdLlen() {
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->llen(key);
@@ -356,7 +366,7 @@ bool ArrayCmdDispatchCtx::cmdLlen() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdLindex() {
@@ -373,11 +383,11 @@ bool ArrayCmdDispatchCtx::cmdLindex() {
         index = std::stoll(index_bulk->getValue());
     } catch (...) {
         auto error = RESPSerializer::serializeError("ERR value is not an integer or out of range");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
         return true;
     }
     if (!server.storage2_.api) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto r = server.storage2_.api->lindex(key, index);
@@ -386,11 +396,11 @@ bool ArrayCmdDispatchCtx::cmdLindex() {
         return true;
     }
     if (r.status != sunkv::storage2::StatusCode::Ok || !r.value.has_value()) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto response = RESPSerializer::serializeBulkString(*r.value);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSadd() {
@@ -408,7 +418,7 @@ bool ArrayCmdDispatchCtx::cmdSadd() {
     }
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->sadd(key, members);
@@ -417,7 +427,7 @@ bool ArrayCmdDispatchCtx::cmdSadd() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSrem() {
@@ -435,7 +445,7 @@ bool ArrayCmdDispatchCtx::cmdSrem() {
     }
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->srem(key, members);
@@ -444,7 +454,7 @@ bool ArrayCmdDispatchCtx::cmdSrem() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSmembers() {
@@ -453,7 +463,7 @@ bool ArrayCmdDispatchCtx::cmdSmembers() {
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
-        conn->send("*0\r\n", 4);
+        writeResp("*0\r\n", 4);
         return true;
     }
     auto r = server.storage2_.api->smembers(key);
@@ -466,7 +476,7 @@ bool ArrayCmdDispatchCtx::cmdSmembers() {
     for (const auto& member : members) {
         members_array += "$" + std::to_string(member.length()) + "\r\n" + member + "\r\n";
     }
-    conn->send(members_array.data(), members_array.size());
+    writeResp(members_array.data(), members_array.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdScard() {
@@ -476,7 +486,7 @@ bool ArrayCmdDispatchCtx::cmdScard() {
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->scard(key);
@@ -485,7 +495,7 @@ bool ArrayCmdDispatchCtx::cmdScard() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdSismember() {
@@ -500,7 +510,7 @@ bool ArrayCmdDispatchCtx::cmdSismember() {
     std::string member = member_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->sismember(key, member);
@@ -509,26 +519,26 @@ bool ArrayCmdDispatchCtx::cmdSismember() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHset() {
     if (cmd_array.size() < 4) return false;
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     if (!cmd_array[1] || cmd_array[1]->getType() != RESPType::BULK_STRING) {
         auto error = RESPSerializer::serializeError("ERR wrong number of arguments for 'hset' command");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
         return true;
     }
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
     if (((cmd_array.size() - 2) % 2) != 0) {
         auto error = RESPSerializer::serializeError("ERR wrong number of arguments for 'hset' command");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
         return true;
     }
     int64_t added_total = 0;
@@ -549,7 +559,7 @@ bool ArrayCmdDispatchCtx::cmdHset() {
         }
     }
     auto response = RESPSerializer::serializeInteger(added_total);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHget() {
@@ -563,7 +573,7 @@ bool ArrayCmdDispatchCtx::cmdHget() {
     std::string key = key_bulk->getValue();
     std::string field = field_bulk->getValue();
     if (!server.storage2_.api) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto r = server.storage2_.api->hget(key, field);
@@ -572,11 +582,11 @@ bool ArrayCmdDispatchCtx::cmdHget() {
         return true;
     }
     if (r.status != sunkv::storage2::StatusCode::Ok || !r.value.has_value()) {
-        conn->send(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
+        writeResp(RESPSerializer::kNullBulkString.data(), RESPSerializer::kNullBulkString.size());
         return true;
     }
     auto response = RESPSerializer::serializeBulkString(*r.value);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHdel() {
@@ -594,7 +604,7 @@ bool ArrayCmdDispatchCtx::cmdHdel() {
     }
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->hdel(key, fields);
@@ -603,7 +613,7 @@ bool ArrayCmdDispatchCtx::cmdHdel() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHgetall() {
@@ -612,7 +622,7 @@ bool ArrayCmdDispatchCtx::cmdHgetall() {
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
-        conn->send("*0\r\n", 4);
+        writeResp("*0\r\n", 4);
         return true;
     }
     auto r = server.storage2_.api->hgetall(key);
@@ -627,7 +637,7 @@ bool ArrayCmdDispatchCtx::cmdHgetall() {
         hash_array += "$" + std::to_string(pair.first.length()) + "\r\n" + pair.first + "\r\n";
         hash_array += "$" + std::to_string(pair.second.length()) + "\r\n" + pair.second + "\r\n";
     }
-    conn->send(hash_array.data(), hash_array.size());
+    writeResp(hash_array.data(), hash_array.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHlen() {
@@ -637,7 +647,7 @@ bool ArrayCmdDispatchCtx::cmdHlen() {
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->hlen(key);
@@ -646,7 +656,7 @@ bool ArrayCmdDispatchCtx::cmdHlen() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdHexists() {
@@ -661,7 +671,7 @@ bool ArrayCmdDispatchCtx::cmdHexists() {
     std::string field = field_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->hexists(key, field);
@@ -670,7 +680,7 @@ bool ArrayCmdDispatchCtx::cmdHexists() {
         return true;
     }
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdExpire() {
@@ -686,21 +696,21 @@ bool ArrayCmdDispatchCtx::cmdExpire() {
         int64_t ttl_seconds = std::stoll(ttl_bulk->getValue());
         if (ttl_seconds > server.maxTtlSeconds()) {
             auto error = RESPSerializer::serializeError("ERR TTL exceeds server max_ttl_seconds");
-            conn->send(error.data(), error.size());
+            writeResp(error.data(), error.size());
             return true;
         }
         if (!server.storage2_.api) {
             auto response = RESPSerializer::serializeInteger(0);
-            conn->send(response.data(), response.size());
+            writeResp(response.data(), response.size());
             return true;
         }
         auto r = server.storage2_.api->expire(key, ttl_seconds);
         auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     } catch (const std::exception& e) {
         auto error = RESPSerializer::serializeError("Invalid TTL value");
-        conn->send(error.data(), error.size());
+        writeResp(error.data(), error.size());
         return true;
     }
 }
@@ -709,13 +719,13 @@ bool ArrayCmdDispatchCtx::cmdTtl() {
     if (!cmd_array[1] || cmd_array[1]->getType() != RESPType::BULK_STRING) return false;
     auto* key_bulk = static_cast<RESPBulkString*>(cmd_array[1].get());
     std::string key = key_bulk->getValue();
-    int64_t remaining_ttl = -2;
+    int64_t remaining_ttl = -2;   
     if (server.storage2_.api) {
         auto r = server.storage2_.api->ttl(key);
         if (r.status == sunkv::storage2::StatusCode::Ok) remaining_ttl = r.value;
     }
     auto response = RESPSerializer::serializeInteger(remaining_ttl);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdPttl() {
@@ -729,7 +739,7 @@ bool ArrayCmdDispatchCtx::cmdPttl() {
         if (r.status == sunkv::storage2::StatusCode::Ok) remaining = r.value;
     }
     auto response = RESPSerializer::serializeInteger(remaining);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 bool ArrayCmdDispatchCtx::cmdPersist() {
@@ -739,12 +749,12 @@ bool ArrayCmdDispatchCtx::cmdPersist() {
     std::string key = key_bulk->getValue();
     if (!server.storage2_.api) {
         auto response = RESPSerializer::serializeInteger(0);
-        conn->send(response.data(), response.size());
+        writeResp(response.data(), response.size());
         return true;
     }
     auto r = server.storage2_.api->persist(key);
     auto response = RESPSerializer::serializeInteger(r.status == sunkv::storage2::StatusCode::Ok ? r.value : 0);
-    conn->send(response.data(), response.size());
+    writeResp(response.data(), response.size());
     return true;
 }
 
@@ -803,6 +813,20 @@ bool dispatchArrayCommandsLookup(Server& server,
     const auto& tab = array_cmd_dispatch_table();
     if (auto it = tab.find(cmd_name); it != tab.end()) {
         if (it->second(ctx)) return true;
-    }
+    } 
     return false;
+}
+
+std::string executeArrayCommandToResp(Server& server,
+                                      const std::string& cmd_name,
+                                      const std::vector<RESPValue::Ptr>& cmd_array) {
+    std::string out;
+    ArrayCmdDispatchCtx ctx{server, nullptr, cmd_array, &out};
+    const auto& tab = array_cmd_dispatch_table();
+    if (auto it = tab.find(cmd_name); it != tab.end()) {
+        if (it->second(ctx)) {
+            return out;
+        }
+    }
+    return RESPSerializer::serializeError("ERR unknown command");
 }

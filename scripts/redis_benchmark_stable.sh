@@ -34,6 +34,20 @@ FAIL_REASONS=()
 cleanup() {
   if [[ -n "${SERVER_PID}" ]]; then
     kill -TERM "${SERVER_PID}" 2>/dev/null || true
+
+    # 避免 wait 在异常场景下无限阻塞：限时等待后兜底强杀。
+    local waited=0
+    local wait_step=1
+    local wait_limit="${CLEANUP_WAIT_SECONDS:-10}"
+    while kill -0 "${SERVER_PID}" 2>/dev/null; do
+      if [[ "${waited}" -ge "${wait_limit}" ]]; then
+        kill -KILL "${SERVER_PID}" 2>/dev/null || true
+        break
+      fi
+      sleep "${wait_step}"
+      waited=$((waited + wait_step))
+    done
+
     wait "${SERVER_PID}" 2>/dev/null || true
     SERVER_PID=""
   fi
