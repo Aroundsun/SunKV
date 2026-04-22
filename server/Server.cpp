@@ -465,6 +465,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             conn->forceClose();
             return;
         }
+        updateMaxInputBufferBytes_(pendingReadableBytes());
 
         struct WriteCoalescingScope final {
             explicit WriteCoalescingScope(const std::shared_ptr<TcpConnection>& connection) : conn(connection) {
@@ -539,6 +540,7 @@ void Server::onMessage(const std::shared_ptr<TcpConnection>& conn, void* data, s
             conn->forceClose();
             return;
         }
+        updateMaxInputBufferBytes_(pendingReadableBytes());
     } catch (const std::exception& e) {
         LOG_ERROR("处理来自 {} 的消息时出错: {}", conn->peerAddress(), e.what());
         auto error = RESPSerializer::serializeError("Internal server error");
@@ -584,6 +586,7 @@ size_t Server::subscribeChannel_(const std::shared_ptr<TcpConnection>& conn, con
     {
         std::lock_guard<std::mutex> lock{pubsub_mu_};
         channel_subscribers_[channel].insert(conn);
+        refreshPubSubStatsLocked_();
     }
     return subscribed_count;
 }
@@ -609,6 +612,7 @@ size_t Server::unsubscribeChannel_(const std::shared_ptr<TcpConnection>& conn, c
                 channel_subscribers_.erase(channel_iter);
             }
         }
+        refreshPubSubStatsLocked_();
     }
     return subscribed_count;
 }
@@ -635,6 +639,7 @@ std::vector<std::pair<std::string, size_t>> Server::unsubscribeAllChannels_(cons
                 }
             }
         }
+        refreshPubSubStatsLocked_();
     }
 
     std::vector<std::pair<std::string, size_t>> result;
@@ -653,21 +658,27 @@ int64_t Server::publishMessage_(const std::string& channel, const std::string& p
         if (iter == channel_subscribers_.end()) {
             return 0;
         }
+        // 预分配订阅者的数量
         subscribers.reserve(iter->second.size());
+        // 遍历订阅者
         for (const auto& subscriber : iter->second) {
+            // 如果订阅者不为空且连接状态为已连接，则添加到订阅者列表中
             if (subscriber && subscriber->connected()) {
                 subscribers.push_back(subscriber);
             }
         }
     }
-
+    // 构建消息
     std::string message = "*3\r\n";
     message += RESPSerializer::serializeBulkString("message");
     message += RESPSerializer::serializeBulkString(channel);
     message += RESPSerializer::serializeBulkString(payload);
+    // 遍历订阅者 发送订阅消息
     for (const auto& subscriber : subscribers) {
         subscriber->send(message.data(), message.size());
     }
+    pubsub_publish_total_.fetch_add(1);
+    pubsub_delivered_total_.fetch_add(static_cast<uint64_t>(subscribers.size()));
     return static_cast<int64_t>(subscribers.size());
 }
 
@@ -693,12 +704,49 @@ void Server::clearSubscriptionsForConnection_(const std::shared_ptr<TcpConnectio
             }
         }
     }
+    refreshPubSubStatsLocked_();
 }
 
 void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             const std::shared_ptr<Server::ConnParseState>& ctx,
                             const RESPValue::Ptr& command) {
+    struct CommandMetricsScope final {
+        CommandMetricsScope(Server* server_ref,
+                            const std::shared_ptr<TcpConnection>& conn_ref,
+                            const std::shared_ptr<Server::ConnParseState>& ctx_ref,
+                            std::string& cmd_name_ref,
+                            bool& command_error_ref)
+            : server(server_ref),
+              conn(conn_ref),
+              ctx(ctx_ref),
+              cmd_name(cmd_name_ref),
+              command_error(command_error_ref),
+              begin(std::chrono::steady_clock::now()) {}
+
+        ~CommandMetricsScope() {
+            if (server == nullptr || conn == nullptr) {
+                return;
+            }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - begin).count();
+            const auto latency_us = elapsed < 0 ? static_cast<uint64_t>(0) : static_cast<uint64_t>(elapsed);
+            server->recordCommandMetrics_(conn, ctx, cmd_name, command_error, latency_us);
+        }
+
+        Server* server;
+        std::shared_ptr<TcpConnection> conn;
+        std::shared_ptr<Server::ConnParseState> ctx;
+        std::string& cmd_name;
+        bool& command_error;
+        std::chrono::steady_clock::time_point begin;
+    };
+
+    std::string observed_command = "UNKNOWN";
+    bool command_error = false;
+    CommandMetricsScope metrics_scope(this, conn, ctx, observed_command, command_error);
+
     if (!command) {
+        command_error = true;
         auto error = RESPSerializer::serializeError("Invalid command");
         conn->send(error.data(), error.size());
         return;
@@ -720,8 +768,10 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     // 将命令的名称转换为大写
                     std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(),
                                    [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+                    observed_command = cmd_name;
 
                     if (cmd_name == "WATCH" || cmd_name == "UNWATCH") {
+                        command_error = true;
                         auto err = RESPSerializer::serializeError("ERR WATCH/UNWATCH is not supported");
                         conn->send(err.data(), err.size());
                         return;
@@ -732,6 +782,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                         const bool allowed = (cmd_name == "SUBSCRIBE" || cmd_name == "UNSUBSCRIBE" ||
                                               cmd_name == "PING" || cmd_name == "QUIT");
                         if (!allowed) {
+                            command_error = true;
                             auto err = RESPSerializer::serializeError(
                                 "ERR only SUBSCRIBE/UNSUBSCRIBE/PING/QUIT allowed in this context");
                             conn->send(err.data(), err.size());
@@ -748,6 +799,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     // 事务控制命令：MULTI / EXEC / DISCARD
                     if (cmd_name == "MULTI") {
                         if (ctx && ctx->in_multi) {
+                            command_error = true;
                             auto err = RESPSerializer::serializeError("ERR MULTI calls can not be nested");
                             conn->send(err.data(), err.size());
                             return;
@@ -762,6 +814,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     }
                     if (cmd_name == "DISCARD") {
                         if (!ctx || !ctx->in_multi) {
+                            command_error = true;
                             auto err = RESPSerializer::serializeError("ERR DISCARD without MULTI");
                             conn->send(err.data(), err.size());
                             return;
@@ -773,6 +826,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     }
                     if (cmd_name == "EXEC") {
                         if (!ctx || !ctx->in_multi) {
+                            command_error = true;
                             auto err = RESPSerializer::serializeError("ERR EXEC without MULTI");
                             conn->send(err.data(), err.size());
                             return;
@@ -813,6 +867,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
             auto* simple_string = static_cast<RESPSimpleString*>(command.get());
             if (simple_string != nullptr) {
                 std::string cmd = simple_string->toString();
+                observed_command = cmd;
                 
                 if (cmd == "PING") {
                     conn->send(RESPSerializer::kSimpleStringPong.data(), RESPSerializer::kSimpleStringPong.size());
@@ -822,10 +877,12 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
         }
         
         // 如果不支持的命令，返回更兼容 Redis 的错误格式
+        command_error = true;
         auto error = RESPSerializer::serializeError("ERR unknown command");
         conn->send(error.data(), error.size());
         
     } catch (const std::exception& e) {
+        command_error = true;
         LOG_ERROR("执行命令出错: {}", e.what());
         auto error = RESPSerializer::serializeError("Command execution failed");
         conn->send(error.data(), error.size());
@@ -876,19 +933,77 @@ std::string Server::buildStatsReport() {
     }
 
     auto pool_stats = ThreadLocalBufferPool::instance().getStats();
+    const uint64_t total_commands = this->total_commands_.load();
+    const uint64_t total_latency_us = total_command_latency_us_.load();
+    const uint64_t avg_latency_us = total_commands == 0 ? 0 : (total_latency_us / total_commands);
     oss << "uptime_seconds=" << stats.uptime_seconds << "\n"
         << "total_connections=" << stats.total_connections << "\n"
         << "current_connections=" << stats.current_connections << "\n"
         << "total_commands=" << stats.total_commands << "\n"
+        << "total_command_errors=" << total_command_errors_.load() << "\n"
+        << "total_slow_commands=" << total_slow_commands_.load() << "\n"
+        << "avg_command_latency_us=" << avg_latency_us << "\n"
+        << "max_command_latency_us=" << max_command_latency_us_.load() << "\n"
         << "total_operations=" << stats.total_operations << "\n"
         << "kv_size=" << kv_size << "\n"
         << "expired_keys_cleaned=" << expired_keys_cleaned_.load() << "\n"
+        << "max_conn_input_buffer_bytes=" << max_conn_input_buffer_bytes_.load() << "\n"
+        << "output_buffer_peak_bytes=" << output_buffer_peak_bytes_.load() << "\n"
+        << "pubsub_channel_count=" << pubsub_channel_count_.load() << "\n"
+        << "pubsub_subscription_count=" << pubsub_subscription_count_.load() << "\n"
+        << "pubsub_publish_total=" << pubsub_publish_total_.load() << "\n"
+        << "pubsub_delivered_total=" << pubsub_delivered_total_.load() << "\n"
         << "memory_pool.hit=" << pool_stats.hit_count << "\n"
         << "memory_pool.miss=" << pool_stats.miss_count << "\n"
         << "memory_pool.release=" << pool_stats.release_count << "\n"
         << "memory_pool.discard=" << pool_stats.discard_count << "\n"
         << "memory_pool.cached_blocks=" << pool_stats.cached_block_count;
     return oss.str();
+}
+
+void Server::refreshPubSubStatsLocked_() {
+    pubsub_channel_count_.store(static_cast<uint64_t>(channel_subscribers_.size()));
+    uint64_t total_subscriptions = 0;
+    for (const auto& channel_and_subscribers : channel_subscribers_) {
+        total_subscriptions += static_cast<uint64_t>(channel_and_subscribers.second.size());
+    }
+    pubsub_subscription_count_.store(total_subscriptions);
+}
+
+void Server::updateMaxInputBufferBytes_(size_t value) {
+    uint64_t current = max_conn_input_buffer_bytes_.load();
+    const uint64_t candidate = static_cast<uint64_t>(value);
+    while (candidate > current &&
+           !max_conn_input_buffer_bytes_.compare_exchange_weak(current, candidate)) {
+    }
+}
+
+void Server::recordCommandMetrics_(const std::shared_ptr<TcpConnection>& conn,
+                                   const std::shared_ptr<Server::ConnParseState>& ctx,
+                                   const std::string& cmd_name,
+                                   bool command_error,
+                                   uint64_t latency_us) {
+    total_command_latency_us_.fetch_add(latency_us);
+    uint64_t current_max = max_command_latency_us_.load();
+    while (latency_us > current_max &&
+           !max_command_latency_us_.compare_exchange_weak(current_max, latency_us)) {
+    }
+
+    if (command_error) {
+        total_command_errors_.fetch_add(1);
+    }
+
+    const uint64_t threshold_us =
+        static_cast<uint64_t>(std::max(0, config_.slowlog_threshold_ms)) * static_cast<uint64_t>(1000);
+    if (latency_us >= threshold_us) {
+        total_slow_commands_.fetch_add(1);
+        if (config_.enable_slowlog) {
+            const bool in_multi = (ctx != nullptr && ctx->in_multi);
+            const bool in_subscribe_mode = isSubscribeMode_(conn);
+            LOG_WARN("slow_command cmd={} latency_us={} conn={} in_multi={} subscribe_mode={} error={}",
+                     cmd_name, latency_us, conn ? conn->name() : "unknown", in_multi, in_subscribe_mode, command_error);
+        }
+    }
 }
 
 void Server::statsReportThread() {

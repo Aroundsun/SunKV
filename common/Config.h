@@ -51,6 +51,8 @@ public:
     bool enable_console_log = true;
     bool enable_periodic_stats_log = false;
     int stats_log_interval_seconds = 30;
+    bool enable_slowlog = false;
+    int slowlog_threshold_ms = 20;
     
     // TTL 配置
     int ttl_cleanup_interval_seconds = 5;

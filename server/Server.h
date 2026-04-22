@@ -206,6 +206,13 @@ private:
     // 发布消息
     int64_t publishMessage_(const std::string& channel, const std::string& payload);
     void clearSubscriptionsForConnection_(const std::shared_ptr<TcpConnection>& conn);
+    void refreshPubSubStatsLocked_();
+    void updateMaxInputBufferBytes_(size_t value);
+    void recordCommandMetrics_(const std::shared_ptr<TcpConnection>& conn,
+                               const std::shared_ptr<ConnParseState>& ctx,
+                               const std::string& cmd_name,
+                               bool command_error,
+                               uint64_t latency_us);
 
     Config config_;                    // 配置对象
     std::unique_ptr<EventLoop> main_loop_;              // 主事件循环
@@ -254,8 +261,18 @@ private:
     std::atomic<uint64_t> total_connections_{0};
     std::atomic<uint64_t> current_connections_{0};
     std::atomic<uint64_t> total_commands_{0};
+    std::atomic<uint64_t> total_command_errors_{0};
+    std::atomic<uint64_t> total_slow_commands_{0};
+    std::atomic<uint64_t> total_command_latency_us_{0};
+    std::atomic<uint64_t> max_command_latency_us_{0};
     std::atomic<uint64_t> expired_keys_cleaned_{0};   // 清理的过期键计数
     std::atomic<uint64_t> total_operations_{0};
+    std::atomic<uint64_t> max_conn_input_buffer_bytes_{0};
+    std::atomic<uint64_t> output_buffer_peak_bytes_{0};
+    std::atomic<uint64_t> pubsub_channel_count_{0};
+    std::atomic<uint64_t> pubsub_subscription_count_{0};
+    std::atomic<uint64_t> pubsub_publish_total_{0};
+    std::atomic<uint64_t> pubsub_delivered_total_{0};
     std::chrono::steady_clock::time_point start_time_;
     
 };

@@ -145,6 +145,12 @@ static const std::vector<OptionSpec>& specs() {
         {"stats_log_interval_seconds", "logging", "--stats-log-interval", ValueType::Int, "30", "Stats log interval (seconds)",
             [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.stats_log_interval_seconds = x; return true; },
             [](const Config& c) { return std::to_string(c.stats_log_interval_seconds); }},
+        {"enable_slowlog", "logging", "--enable-slowlog", ValueType::Bool, "false", "Enable structured slow command log",
+            [](Config& c, const std::string& v) { bool b; if (!parseBoolLoose(v, &b)) return false; c.enable_slowlog = b; return true; },
+            [](const Config& c) { return c.enable_slowlog ? "true" : "false"; }},
+        {"slowlog_threshold_ms", "logging", "--slowlog-threshold-ms", ValueType::Int, "20", "Slow command threshold in milliseconds",
+            [](Config& c, const std::string& v) { int x; if (!parseIntLoose(v, &x)) return false; c.slowlog_threshold_ms = x; return true; },
+            [](const Config& c) { return std::to_string(c.slowlog_threshold_ms); }},
 
         // ttl
         {"ttl_cleanup_interval_seconds", "ttl", "--ttl-cleanup-interval-seconds", ValueType::Int, "5", "TTL cleanup interval (seconds)",
@@ -419,6 +425,10 @@ bool Config::validate() const {
         LOG_ERROR("Invalid stats_log_interval_seconds: {}", stats_log_interval_seconds);
         valid = false;
     }
+    if (slowlog_threshold_ms < 0) {
+        LOG_ERROR("Invalid slowlog_threshold_ms: {}", slowlog_threshold_ms);
+        valid = false;
+    }
 
     if (ttl_cleanup_interval_seconds <= 0) {
         LOG_ERROR("Invalid ttl_cleanup_interval_seconds: {}", ttl_cleanup_interval_seconds);
@@ -493,6 +503,8 @@ void Config::print() const {
     std::cout << "  Console Log: " << (enable_console_log ? "Yes" : "No") << std::endl;
     std::cout << "  Periodic Stats Log: " << (enable_periodic_stats_log ? "Yes" : "No") << std::endl;
     std::cout << "  Stats Log Interval: " << stats_log_interval_seconds << " s" << std::endl;
+    std::cout << "  Slowlog Enabled: " << (enable_slowlog ? "Yes" : "No") << std::endl;
+    std::cout << "  Slowlog Threshold: " << slowlog_threshold_ms << " ms" << std::endl;
     
     std::cout << "=========================" << std::endl;
 }

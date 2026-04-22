@@ -517,6 +517,20 @@ if(BUILD_TEST)
         spdlog::spdlog
         storage2lib
     )
+
+    add_executable(server_observability_info_test
+        test/server/server_observability_info_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_observability_info_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
     
     # RESP 简单测试 - 基础 RESP 功能测试（文件不存在，暂时注释）
     # add_executable(resp_simple_test test/resp_simple_test.cpp
@@ -612,6 +626,7 @@ if(BUILD_TEST)
     add_test(NAME server_shutdown_integration COMMAND server_shutdown_integration_test)
     add_test(NAME server_transaction_multi_exec COMMAND server_transaction_multi_exec_test)
     add_test(NAME server_pubsub_integration COMMAND server_pubsub_integration_test)
+    add_test(NAME server_observability_info COMMAND server_observability_info_test)
     set_tests_properties(
         server_message_framing_integration
         server_error_paths_integration
