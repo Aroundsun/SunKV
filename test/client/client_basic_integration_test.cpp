@@ -137,6 +137,84 @@ int main() {
     auto snap = client.snapshot();
     assert(snap.ok);
 
+    // MULTI/EXEC/DISCARD
+    auto txBegin = client.multi();
+    assert(txBegin.ok);
+    auto txQueueSet = client.command({"SET", "tx:k", "v1"});
+    assert(txQueueSet.ok);
+    assert(txQueueSet.value.type == RespType::SimpleString);
+    assert(txQueueSet.value.str == "QUEUED");
+    auto txQueueGet = client.command({"GET", "tx:k"});
+    assert(txQueueGet.ok);
+    assert(txQueueGet.value.type == RespType::SimpleString);
+    assert(txQueueGet.value.str == "QUEUED");
+    auto txExec = client.exec();
+    assert(txExec.ok);
+    assert(txExec.value.size() == 2);
+    assert(txExec.value[0].type == RespType::SimpleString);
+    assert(txExec.value[0].str == "OK");
+    assert(txExec.value[1].type == RespType::BulkString);
+    assert(txExec.value[1].str == "v1");
+    auto txDiscardErr = client.discard();
+    assert(!txDiscardErr.ok);
+
+    auto txBegin2 = client.multi();
+    assert(txBegin2.ok);
+    auto txQueue2 = client.command({"SET", "tx:discard", "x"});
+    assert(txQueue2.ok);
+    assert(txQueue2.value.type == RespType::SimpleString);
+    assert(txQueue2.value.str == "QUEUED");
+    auto txDiscard = client.discard();
+    assert(txDiscard.ok);
+    auto txDiscardGet = client.get("tx:discard");
+    assert(txDiscardGet.ok);
+    assert(!txDiscardGet.value.has_value());
+
+    // Pub/Sub
+    Client subClient(opts);
+    auto subConn = subClient.connect();
+    assert(subConn.ok);
+    auto pubClient = Client(opts);
+    auto pubConn = pubClient.connect();
+    assert(pubConn.ok);
+
+    auto subAck = subClient.subscribe({"news"});
+    assert(subAck.ok);
+    assert(subAck.value.type == RespType::Array);
+    assert(subAck.value.array.size() == 3);
+    assert(subAck.value.array[0].type == RespType::BulkString);
+    assert(subAck.value.array[0].str == "subscribe");
+    assert(subAck.value.array[1].type == RespType::BulkString);
+    assert(subAck.value.array[1].str == "news");
+
+    auto delivered = pubClient.publish("news", "hello");
+    assert(delivered.ok);
+    assert(delivered.value == 1);
+
+    auto msg = subClient.command({"PING"});
+    assert(msg.ok);
+    assert(msg.value.type == RespType::Array);
+    assert(msg.value.array.size() == 3);
+    assert(msg.value.array[0].type == RespType::BulkString);
+    assert(msg.value.array[0].str == "message");
+    assert(msg.value.array[1].type == RespType::BulkString);
+    assert(msg.value.array[1].str == "news");
+    assert(msg.value.array[2].type == RespType::BulkString);
+    assert(msg.value.array[2].str == "hello");
+
+    auto unsubAck = subClient.unsubscribe({"news"});
+    assert(unsubAck.ok);
+    assert(unsubAck.value.type == RespType::Array);
+    assert(unsubAck.value.array.size() == 3);
+    assert(unsubAck.value.array[0].type == RespType::BulkString);
+    assert(unsubAck.value.array[0].str == "unsubscribe");
+    assert(unsubAck.value.array[1].type == RespType::BulkString);
+    assert(unsubAck.value.array[1].str == "news");
+    assert(unsubAck.value.array[2].type == RespType::Integer);
+    assert(unsubAck.value.array[2].integer == 0);
+    subClient.close();
+    pubClient.close();
+
     auto fa = client.flushall();
     assert(fa.ok);
     auto db1 = client.dbsize();

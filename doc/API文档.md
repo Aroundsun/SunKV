@@ -7,6 +7,7 @@
 - [日志 API](#日志-api)
 - [TCP 服务器 API](#tcp-服务器-api)
 - [多线程 API](#多线程-api)
+- [服务端命令 API](#服务端命令-api)
 
 ---
 
@@ -573,3 +574,292 @@ if (buffer.readableBytes() > 0) {
 ```
 
 本文档覆盖 SunKV 核心组件的常用接口与使用方式，可作为开发参考。
+
+---
+
+## 服务端命令 API
+
+本节描述当前 SunKV 服务端对外暴露的 RESP 命令接口，和上文的 C++ 组件 API 不同，这里更偏“协议/命令层”。
+
+### 1. 基础约定
+
+- 协议：RESP
+- 主要请求形态：RESP Array
+- 错误返回：Redis 风格 `-ERR ...`
+- 空值返回：`$-1`
+
+说明：
+
+- 当前实现兼容 Redis 风格交互，但不是 Redis 全量语义实现。
+- 命令入口主要位于：
+  - `server/Server.cpp`
+  - `server/ArrayCmdDispatch.cpp`
+
+### 2. 基础与管理命令
+
+#### 2.1 `PING`
+
+- 请求：`PING`
+- 返回：`+PONG`
+
+#### 2.2 `HEALTH`
+
+- 请求：`HEALTH`
+- 返回：
+  - 服务健康：`+OK`
+  - 非健康：`-UNHEALTHY`
+
+#### 2.3 `DBSIZE`
+
+- 请求：`DBSIZE`
+- 返回：Integer，表示当前 key 总数
+
+#### 2.4 `FLUSHALL`
+
+- 请求：`FLUSHALL`
+- 返回：`+OK`
+- 说明：清空当前数据，并通过持久化路径记录 `ClearAll`
+
+#### 2.5 `SNAPSHOT`
+
+- 请求：`SNAPSHOT`
+- 返回：
+  - 成功：`+OK`
+  - 失败：`-Snapshot creation failed`
+
+#### 2.6 `STATS`
+
+- 请求：`STATS`
+- 返回：Bulk String，内容为 `key=value` 文本
+
+#### 2.7 `MONITOR`
+
+- 请求：`MONITOR`
+- 返回：Bulk String
+- 说明：当前实现返回统计报告文本，不是 Redis 原生 MONITOR 流式语义
+
+#### 2.8 `DEBUG INFO`
+
+- 请求：`DEBUG INFO`
+- 返回：Bulk String，内容为统计/诊断信息
+
+#### 2.9 `DEBUG RESETSTATS`
+
+- 请求：`DEBUG RESETSTATS`
+- 返回：`+OK`
+- 说明：当前会重置部分统计（如内存池统计）
+
+### 3. String 命令
+
+#### 3.1 `SET key value`
+
+- 返回：
+  - 成功：`+OK`
+  - 内存不足：`-OOM maxmemory`
+
+#### 3.2 `GET key`
+
+- 返回：
+  - 命中：Bulk String
+  - 未命中：`$-1`
+
+#### 3.3 `DEL key [key ...]`
+
+- 返回：Integer，删除成功的 key 数量
+
+#### 3.4 `EXISTS key [key ...]`
+
+- 返回：Integer，存在的 key 数量
+
+#### 3.5 `KEYS *`
+
+- 返回：Array，元素为 Bulk String
+- 说明：当前客户端 typed API 固定封装为 `KEYS *`
+
+### 4. TTL 命令
+
+#### 4.1 `EXPIRE key seconds`
+
+- 返回：Integer
+  - `1`：设置成功
+  - `0`：key 不存在或未生效
+- 额外错误：
+  - `-ERR TTL exceeds server max_ttl_seconds`
+  - `-Invalid TTL value`
+
+#### 4.2 `TTL key`
+
+- 返回：Integer
+  - `>= 0`：剩余秒数
+  - `-1`：key 存在但没有过期时间
+  - `-2`：key 不存在
+
+#### 4.3 `PTTL key`
+
+- 返回：Integer
+  - `>= 0`：剩余毫秒数
+  - `-1/-2`：语义与 `TTL` 对齐
+
+#### 4.4 `PERSIST key`
+
+- 返回：Integer
+  - `1`：成功移除过期时间
+  - `0`：未生效
+
+### 5. List 命令
+
+- `LPUSH key value [value ...]` -> Integer
+- `RPUSH key value [value ...]` -> Integer
+- `LPOP key` -> Bulk String / `$-1`
+- `RPOP key` -> Bulk String / `$-1`
+- `LLEN key` -> Integer
+- `LINDEX key index` -> Bulk String / `$-1`
+
+错误：
+
+- 类型错误统一返回：
+  - `-WRONGTYPE Operation against a key holding the wrong kind of value`
+- `LINDEX` 非法索引参数：
+  - `-ERR value is not an integer or out of range`
+
+### 6. Set 命令
+
+- `SADD key member [member ...]` -> Integer
+- `SREM key member [member ...]` -> Integer
+- `SCARD key` -> Integer
+- `SISMEMBER key member` -> Integer（0/1）
+- `SMEMBERS key` -> Array
+
+错误：
+
+- 类型错误返回 `WRONGTYPE`
+
+### 7. Hash 命令
+
+- `HSET key field value [field value ...]` -> Integer
+- `HGET key field` -> Bulk String / `$-1`
+- `HDEL key field [field ...]` -> Integer
+- `HLEN key` -> Integer
+- `HEXISTS key field` -> Integer（0/1）
+- `HGETALL key` -> Array（field/value 交替）
+
+错误：
+
+- 类型错误返回 `WRONGTYPE`
+- `HSET` 参数不成对时：
+  - `-ERR wrong number of arguments for 'hset' command`
+
+### 8. 事务命令
+
+#### 8.1 `MULTI`
+
+- 返回：
+  - 成功：`+OK`
+  - 嵌套调用：`-ERR MULTI calls can not be nested`
+
+#### 8.2 事务态普通命令
+
+- 行为：进入事务态后，非控制命令不会立即执行，而是入队
+- 返回：`+QUEUED`
+
+#### 8.3 `EXEC`
+
+- 返回：
+  - 成功：RESP Array，数组中每个元素对应一条已入队命令的执行结果
+  - 非事务态调用：`-ERR EXEC without MULTI`
+
+说明：
+
+- 当前不支持回滚语义
+- 某条命令失败只影响该条结果项，不影响前后已执行命令
+
+#### 8.4 `DISCARD`
+
+- 返回：
+  - 成功：`+OK`
+  - 非事务态调用：`-ERR DISCARD without MULTI`
+
+#### 8.5 `WATCH / UNWATCH`
+
+- 当前未实现
+- 返回：`-ERR WATCH/UNWATCH is not supported`
+
+### 9. 发布订阅命令
+
+#### 9.1 `SUBSCRIBE channel [channel ...]`
+
+- 返回：Array，形如：
+
+```text
+1) "subscribe"
+2) "channel"
+3) (integer) <当前订阅数>
+```
+
+#### 9.2 `UNSUBSCRIBE [channel ...]`
+
+- 返回：Array，形如：
+
+```text
+1) "unsubscribe"
+2) "channel" / nil
+3) (integer) <当前剩余订阅数>
+```
+
+- 当未传频道且当前无订阅时，第二项为 `nil`，第三项为 `0`
+
+#### 9.3 `PUBLISH channel message`
+
+- 返回：Integer，表示成功投递的订阅者数量
+
+#### 9.4 订阅态消息推送
+
+- 订阅者收到消息时，服务端主动推送 Array：
+
+```text
+1) "message"
+2) "channel"
+3) "payload"
+```
+
+#### 9.5 订阅态限制
+
+- 进入订阅态后，仅允许：
+  - `SUBSCRIBE`
+  - `UNSUBSCRIBE`
+  - `PING`
+  - `QUIT`
+
+- 其他命令返回：
+
+```text
+-ERR only SUBSCRIBE/UNSUBSCRIBE/PING/QUIT allowed in this context
+```
+
+### 10. 连接控制
+
+#### 10.1 `QUIT`
+
+- 返回：`+OK`
+- 随后服务端主动关闭连接
+
+### 11. 观测指标说明
+
+`STATS` / `MONITOR` / `DEBUG INFO` 当前会返回 `key=value` 文本，常见字段包括：
+
+- `total_command_errors`
+- `total_slow_commands`
+- `avg_command_latency_us`
+- `max_command_latency_us`
+- `max_conn_input_buffer_bytes`
+- `output_buffer_peak_bytes`
+- `pubsub_channel_count`
+- `pubsub_subscription_count`
+- `pubsub_publish_total`
+- `pubsub_delivered_total`
+
+### 12. 当前未覆盖的兼容点
+
+- `WATCH/UNWATCH` 未实现
+- `MONITOR` 不是 Redis 原生流式实现
+- 未覆盖 Redis 全量命令集合

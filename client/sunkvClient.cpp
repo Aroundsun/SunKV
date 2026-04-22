@@ -30,6 +30,7 @@ const std::vector<HelpEntry>& helpTable() {
         {"DEL", "DEL <key> [key ...]", "string", 1},
         {"EXISTS", "EXISTS <key> [key ...]", "string", 1},
         {"EXPIRE", "EXPIRE <key> <seconds>", "ttl", 2},
+        {"EXEC", "EXEC", "transaction", 6},
         {"FLUSHALL", "FLUSHALL", "admin", 0},
         {"GET", "GET <key>", "string", 1},
         {"HDEL", "HDEL <key> <field> [field ...]", "hash", 5},
@@ -45,8 +46,10 @@ const std::vector<HelpEntry>& helpTable() {
         {"LPOP", "LPOP <key>", "list", 3},
         {"LPUSH", "LPUSH <key> <value> [value ...]", "list", 3},
         {"MONITOR", "MONITOR", "admin", 0},
+        {"MULTI", "MULTI", "transaction", 6},
         {"PERSIST", "PERSIST <key>", "ttl", 2},
         {"PING", "PING", "admin", 0},
+        {"PUBLISH", "PUBLISH <channel> <message>", "pubsub", 7},
         {"PTTL", "PTTL <key>", "ttl", 2},
         {"RPOP", "RPOP <key>", "list", 3},
         {"RPUSH", "RPUSH <key> <value> [value ...]", "list", 3},
@@ -58,7 +61,9 @@ const std::vector<HelpEntry>& helpTable() {
         {"SNAPSHOT", "SNAPSHOT", "admin", 0},
         {"SREM", "SREM <key> <member> [member ...]", "set", 4},
         {"STATS", "STATS", "admin", 0},
+        {"SUBSCRIBE", "SUBSCRIBE <channel> [channel ...]", "pubsub", 7},
         {"TTL", "TTL <key>", "ttl", 2},
+        {"UNSUBSCRIBE", "UNSUBSCRIBE [channel ...]", "pubsub", 7},
     };
     return kHelpTable;
 }
@@ -297,6 +302,65 @@ bool handleTypedCommand(Client& client, const std::vector<std::string>& args) {
         auto r = client.stats();
         if (!r.ok) printError(r.error.message);
         else std::cout << r.value << std::endl;
+        return true;
+    }
+    if (cmd == "MULTI" && args.size() == 1) {
+        auto r = client.multi();
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << "OK" << std::endl;
+        }
+        return true;
+    }
+    if (cmd == "EXEC" && args.size() == 1) {
+        auto r = client.exec();
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << toDisplayString(sunkv::client::RespValue::arrayValue(r.value)) << std::endl;
+        }
+        return true;
+    }
+    if (cmd == "DISCARD" && args.size() == 1) {
+        auto r = client.discard();
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << "OK" << std::endl;
+        }
+        return true;
+    }
+    if (cmd == "PUBLISH" && args.size() == 3) {
+        auto r = client.publish(args[1], args[2]);
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << r.value << std::endl;
+        }
+        return true;
+    }
+    if (cmd == "SUBSCRIBE" && args.size() >= 2) {
+        std::vector<std::string> channels(args.begin() + 1, args.end());
+        auto r = client.subscribe(channels);
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << toDisplayString(r.value) << std::endl;
+        }
+        return true;
+    }
+    if (cmd == "UNSUBSCRIBE") {
+        std::vector<std::string> channels;
+        if (args.size() > 1) {
+            channels.assign(args.begin() + 1, args.end());
+        }
+        auto r = client.unsubscribe(channels);
+        if (!r.ok) {
+            printError(r.error.message);
+        } else {
+            std::cout << toDisplayString(r.value) << std::endl;
+        }
         return true;
     }
     if (cmd == "MONITOR" && args.size() == 1) {

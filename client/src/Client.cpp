@@ -650,4 +650,63 @@ Result<void> Client::mset(const std::vector<std::pair<std::string, std::string>>
     return Result<void>::success();
 }
 
+Result<void> Client::multi() {
+    auto r = command({"MULTI"});
+    if (!r.ok) {
+        return Result<void>::failure(r.error.code, r.error.message);
+    }
+    if (r.value.type == RespType::SimpleString && r.value.str == "OK") {
+        return Result<void>::success();
+    }
+    return Result<void>::failure(ErrorCode::InvalidResponse, "MULTI expected +OK");
+}
+
+Result<std::vector<RespValue>> Client::exec() {
+    auto r = command({"EXEC"});
+    if (!r.ok) {
+        return Result<std::vector<RespValue>>::failure(r.error.code, r.error.message);
+    }
+    if (r.value.type != RespType::Array) {
+        return Result<std::vector<RespValue>>::failure(ErrorCode::InvalidResponse, "EXEC expected array response");
+    }
+    return Result<std::vector<RespValue>>::success(std::move(r.value.array));
+}
+
+Result<void> Client::discard() {
+    auto r = command({"DISCARD"});
+    if (!r.ok) {
+        return Result<void>::failure(r.error.code, r.error.message);
+    }
+    if (r.value.type == RespType::SimpleString && r.value.str == "OK") {
+        return Result<void>::success();
+    }
+    return Result<void>::failure(ErrorCode::InvalidResponse, "DISCARD expected +OK");
+}
+
+Result<int64_t> Client::publish(const std::string& channel, const std::string& payload) {
+    auto r = command({"PUBLISH", channel, payload});
+    if (!r.ok) {
+        return Result<int64_t>::failure(r.error.code, r.error.message);
+    }
+    if (r.value.type == RespType::Integer) {
+        return Result<int64_t>::success(r.value.integer);
+    }
+    return Result<int64_t>::failure(ErrorCode::InvalidResponse, "PUBLISH expected integer response");
+}
+
+Result<RespValue> Client::subscribe(const std::vector<std::string>& channels) {
+    if (channels.empty()) {
+        return Result<RespValue>::failure(ErrorCode::InvalidArgument, "SUBSCRIBE requires at least one channel");
+    }
+    std::vector<std::string> args{"SUBSCRIBE"};
+    args.insert(args.end(), channels.begin(), channels.end());
+    return command(args);
+}
+
+Result<RespValue> Client::unsubscribe(const std::vector<std::string>& channels) {
+    std::vector<std::string> args{"UNSUBSCRIBE"};
+    args.insert(args.end(), channels.begin(), channels.end());
+    return command(args);
+}
+
 } // namespace sunkv::client

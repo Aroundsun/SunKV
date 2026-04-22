@@ -80,6 +80,12 @@ public:
     Result<std::vector<std::pair<std::string, std::string>>> hgetall(const std::string& key);
     Result<std::vector<std::optional<std::string>>> mget(const std::vector<std::string>& keys);
     Result<void> mset(const std::vector<std::pair<std::string, std::string>>& kvs);
+    Result<void> multi();
+    Result<std::vector<RespValue>> exec();
+    Result<void> discard();
+    Result<int64_t> publish(const std::string& channel, const std::string& payload);
+    Result<RespValue> subscribe(const std::vector<std::string>& channels);
+    Result<RespValue> unsubscribe(const std::vector<std::string>& channels = {});
 
 private:
     struct Impl;
