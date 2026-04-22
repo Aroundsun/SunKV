@@ -8,6 +8,7 @@
 #include <chrono>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include "../network/TcpServer.h"
 #include "../network/TcpConnection.h"
@@ -193,6 +194,18 @@ private:
     bool dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
                                const std::string& cmd_name,
                                const std::vector<RESPValue::Ptr>& cmd_array);
+    // Pub/Sub 相关函数
+    // 判断连接是否处于订阅模式
+    bool isSubscribeMode_(const std::shared_ptr<TcpConnection>& conn);
+    // 订阅频道
+    size_t subscribeChannel_(const std::shared_ptr<TcpConnection>& conn, const std::string& channel);
+    // 取消订阅频道
+    size_t unsubscribeChannel_(const std::shared_ptr<TcpConnection>& conn, const std::string& channel);
+    // 取消所有订阅频道
+    std::vector<std::pair<std::string, size_t>> unsubscribeAllChannels_(const std::shared_ptr<TcpConnection>& conn);
+    // 发布消息
+    int64_t publishMessage_(const std::string& channel, const std::string& payload);
+    void clearSubscriptionsForConnection_(const std::shared_ptr<TcpConnection>& conn);
 
     Config config_;                    // 配置对象
     std::unique_ptr<EventLoop> main_loop_;              // 主事件循环
@@ -209,12 +222,16 @@ private:
             std::vector<RESPValue::Ptr> cmd_array; // 原始数组（含命令名参数）
         };
         bool in_multi{false};
-        std::vector<QueuedCommand> queued_commands;
+        std::vector<QueuedCommand> queued_commands; // 待执行队列
+        std::unordered_set<std::string> subscribed_channels; // 订阅频道集合
     };
 
     // 每连接解析上下文：持有残留输入与可复用 RESPParser，避免每条命令重复构造解析器。
     std::mutex conn_inbuf_mu_;
     std::unordered_map<std::string, std::shared_ptr<ConnParseState>> conn_inbuf_;
+
+    std::mutex pubsub_mu_; 
+    std::unordered_map<std::string, std::unordered_set<std::shared_ptr<TcpConnection>>> channel_subscribers_;
     
     std::atomic<bool> running_{false};                 // 运行状态
     std::atomic<bool> stopping_{false};                // 停止状态

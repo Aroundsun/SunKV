@@ -417,11 +417,8 @@ void Server::onConnection(const std::shared_ptr<TcpConnection>& conn) {
         }
         LOG_DEBUG("连接已关闭: {}", conn->peerAddress());
 
-        // 清理该连接的输入残留缓冲，避免长时间运行导致 map 增长
-        {
-            std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
-            conn_inbuf_.erase(conn->name());
-        }
+        // 清理该连接的输入缓冲与订阅关系，避免残留状态。
+        clearSubscriptionsForConnection_(conn);
     }
     
     updateStats();
@@ -562,6 +559,141 @@ bool Server::dispatchArrayCommand_(const std::shared_ptr<TcpConnection>& conn,
                                    const std::vector<RESPValue::Ptr>& cmd_array) {
     return dispatchArrayCommandsLookup(*this, conn, cmd_name, cmd_array);
 }
+// 判断连接是否处于订阅模式
+bool Server::isSubscribeMode_(const std::shared_ptr<TcpConnection>& conn) {
+    std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
+    auto iter = conn_inbuf_.find(conn->name());
+    if (iter == conn_inbuf_.end() || !iter->second) {
+        return false;
+    }
+    return !iter->second->subscribed_channels.empty();
+}
+// 订阅频道
+size_t Server::subscribeChannel_(const std::shared_ptr<TcpConnection>& conn, const std::string& channel) {
+    size_t subscribed_count = 0;
+    {
+        std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
+        auto iter = conn_inbuf_.find(conn->name());
+        if (iter == conn_inbuf_.end() || !iter->second) {
+            return 0;
+        }
+        iter->second->subscribed_channels.insert(channel);
+        subscribed_count = iter->second->subscribed_channels.size();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock{pubsub_mu_};
+        channel_subscribers_[channel].insert(conn);
+    }
+    return subscribed_count;
+}
+
+// 取消订阅频道
+size_t Server::unsubscribeChannel_(const std::shared_ptr<TcpConnection>& conn, const std::string& channel) {
+    size_t subscribed_count = 0;
+    {
+        std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
+        auto iter = conn_inbuf_.find(conn->name());
+        if (iter != conn_inbuf_.end() && iter->second) {
+            iter->second->subscribed_channels.erase(channel);
+            subscribed_count = iter->second->subscribed_channels.size();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock{pubsub_mu_};
+        auto channel_iter = channel_subscribers_.find(channel);
+        if (channel_iter != channel_subscribers_.end()) {
+            channel_iter->second.erase(conn);
+            if (channel_iter->second.empty()) {
+                channel_subscribers_.erase(channel_iter);
+            }
+        }
+    }
+    return subscribed_count;
+}
+// 取消所有订阅频道
+std::vector<std::pair<std::string, size_t>> Server::unsubscribeAllChannels_(const std::shared_ptr<TcpConnection>& conn) {
+    std::vector<std::string> channels;
+    {
+        std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
+        auto iter = conn_inbuf_.find(conn->name());
+        if (iter != conn_inbuf_.end() && iter->second) {
+            channels.assign(iter->second->subscribed_channels.begin(), iter->second->subscribed_channels.end());
+            iter->second->subscribed_channels.clear();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock{pubsub_mu_};
+        for (const auto& channel : channels) {
+            auto channel_iter = channel_subscribers_.find(channel);
+            if (channel_iter != channel_subscribers_.end()) {
+                channel_iter->second.erase(conn);
+                if (channel_iter->second.empty()) {
+                    channel_subscribers_.erase(channel_iter);
+                }
+            }
+        }
+    }
+
+    std::vector<std::pair<std::string, size_t>> result;
+    result.reserve(channels.size());
+    for (const auto& channel : channels) {
+        result.emplace_back(channel, 0);
+    }
+    return result;
+}
+// 发布消息
+int64_t Server::publishMessage_(const std::string& channel, const std::string& payload) {
+    std::vector<std::shared_ptr<TcpConnection>> subscribers;
+    {
+        std::lock_guard<std::mutex> lock{pubsub_mu_};
+        auto iter = channel_subscribers_.find(channel);
+        if (iter == channel_subscribers_.end()) {
+            return 0;
+        }
+        subscribers.reserve(iter->second.size());
+        for (const auto& subscriber : iter->second) {
+            if (subscriber && subscriber->connected()) {
+                subscribers.push_back(subscriber);
+            }
+        }
+    }
+
+    std::string message = "*3\r\n";
+    message += RESPSerializer::serializeBulkString("message");
+    message += RESPSerializer::serializeBulkString(channel);
+    message += RESPSerializer::serializeBulkString(payload);
+    for (const auto& subscriber : subscribers) {
+        subscriber->send(message.data(), message.size());
+    }
+    return static_cast<int64_t>(subscribers.size());
+}
+
+void Server::clearSubscriptionsForConnection_(const std::shared_ptr<TcpConnection>& conn) {
+    std::vector<std::string> channels;
+    {
+        std::lock_guard<std::mutex> lock{conn_inbuf_mu_};
+        auto iter = conn_inbuf_.find(conn->name());
+        if (iter == conn_inbuf_.end() || !iter->second) {
+            return;
+        }
+        channels.assign(iter->second->subscribed_channels.begin(), iter->second->subscribed_channels.end());
+        conn_inbuf_.erase(iter);
+    }
+
+    std::lock_guard<std::mutex> lock{pubsub_mu_};
+    for (const auto& channel : channels) {
+        auto channel_iter = channel_subscribers_.find(channel);
+        if (channel_iter != channel_subscribers_.end()) {
+            channel_iter->second.erase(conn);
+            if (channel_iter->second.empty()) {
+                channel_subscribers_.erase(channel_iter);
+            }
+        }
+    }
+}
 
 void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             const std::shared_ptr<Server::ConnParseState>& ctx,
@@ -594,6 +726,24 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                         conn->send(err.data(), err.size());
                         return;
                     }
+                    // 订阅态命令白名单准入门禁
+                    if (ctx && isSubscribeMode_(conn)) {
+                        // 允许的订阅态命令
+                        const bool allowed = (cmd_name == "SUBSCRIBE" || cmd_name == "UNSUBSCRIBE" ||
+                                              cmd_name == "PING" || cmd_name == "QUIT");
+                        if (!allowed) {
+                            auto err = RESPSerializer::serializeError(
+                                "ERR only SUBSCRIBE/UNSUBSCRIBE/PING/QUIT allowed in this context");
+                            conn->send(err.data(), err.size());
+                            return;
+                        }
+                    }
+
+                    if (cmd_name == "QUIT") {
+                        conn->send(RESPSerializer::kSimpleStringOk.data(), RESPSerializer::kSimpleStringOk.size());
+                        conn->forceClose();
+                        return;
+                    }
 
                     // 事务控制命令：MULTI / EXEC / DISCARD
                     if (cmd_name == "MULTI") {
@@ -602,6 +752,7 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             conn->send(err.data(), err.size());
                             return;
                         }
+                        // 设置事务状态
                         if (ctx) {
                             ctx->in_multi = true;
                             ctx->queued_commands.clear();
@@ -626,10 +777,10 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                             conn->send(err.data(), err.size());
                             return;
                         }
-
+                        //拼接响应
                         std::string out = "*" + std::to_string(ctx->queued_commands.size()) + "\r\n";
-                        for (const auto& q : ctx->queued_commands) {
-                            out += executeArrayCommandToResp(*this, q.cmd_name, q.cmd_array);
+                        for (const auto& queued_command : ctx->queued_commands) {
+                            out += executeArrayCommandToResp(*this, queued_command.cmd_name, queued_command.cmd_array);
                         }
                         ctx->in_multi = false;
                         ctx->queued_commands.clear();
@@ -638,11 +789,12 @@ void Server::processCommand(const std::shared_ptr<TcpConnection>& conn,
                     }
 
                     // 事务态：非控制命令入队并返回 +QUEUED
+                    // 入队：不执行任何命令，将命令存入待执行队列中
                     if (ctx && ctx->in_multi) {
-                        ConnParseState::QueuedCommand q;
-                        q.cmd_name = cmd_name;
-                        q.cmd_array = cmd_array;
-                        ctx->queued_commands.push_back(std::move(q));
+                        ConnParseState::QueuedCommand queued_command;
+                        queued_command.cmd_name = cmd_name;
+                        queued_command.cmd_array = cmd_array;
+                        ctx->queued_commands.push_back(std::move(queued_command));
                         static constexpr std::string_view kQueued = "+QUEUED\r\n";
                         conn->send(kQueued.data(), kQueued.size());
                         return;
