@@ -32,15 +32,18 @@ find_package(spdlog REQUIRED)
 # ============================================================================
 # 包含目录设置
 # ============================================================================
-# 添加头文件搜索路径，使各模块可以相互包含头文件
+# 统一头文件搜索路径，避免跨目录 include 在不同 target 下表现不一致。
+set(SUNKV_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}            # 项目根目录（支持 "module/file.h" 形式）
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/network
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+    ${CMAKE_CURRENT_SOURCE_DIR}/server
+    ${CMAKE_CURRENT_SOURCE_DIR}/storage2
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
+)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})                    # 项目根目录
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/network)             # 网络模块
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/protocol)            # 协议模块
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/storage)            # 存储模块
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/persistence)        # 持久化模块
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/server)              # 服务器模块
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/client/include)      # 客户端 SDK 头文件
+include_directories(${SUNKV_INCLUDE_DIRS})
 
 # ============================================================================
 # 源文件定义
@@ -207,6 +210,21 @@ if(BUILD_TEST)
         ${PROTOCOL_SOURCES}
     )
     target_link_libraries(client_pipeline_integration_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+        clientlib
+    )
+
+    add_executable(client_disconnect_recovery_test
+        test/client/client_disconnect_recovery_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(client_disconnect_recovery_test
         Threads::Threads
         spdlog::spdlog
         storage2lib
@@ -531,6 +549,62 @@ if(BUILD_TEST)
         spdlog::spdlog
         storage2lib
     )
+
+    add_executable(server_regression_matrix_test
+        test/server/server_regression_matrix_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_regression_matrix_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_resp_error_recovery_test
+        test/server/server_resp_error_recovery_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_resp_error_recovery_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_input_buffer_limit_test
+        test/server/server_input_buffer_limit_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_input_buffer_limit_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
+
+    add_executable(server_half_close_inflight_request_test
+        test/server/server_half_close_inflight_request_test.cpp
+        server/Server.cpp
+        server/ArrayCmdDispatch.cpp
+        common/Config.cpp
+        ${NETWORK_SOURCES}
+        ${PROTOCOL_SOURCES}
+    )
+    target_link_libraries(server_half_close_inflight_request_test
+        Threads::Threads
+        spdlog::spdlog
+        storage2lib
+    )
     
     # RESP 简单测试 - 基础 RESP 功能测试（文件不存在，暂时注释）
     # add_executable(resp_simple_test test/resp_simple_test.cpp
@@ -559,10 +633,12 @@ if(BUILD_TEST)
     add_test(NAME client_resp_codec COMMAND client_resp_codec_test)
     add_test(NAME client_basic_integration COMMAND client_basic_integration_test)
     add_test(NAME client_pipeline_integration COMMAND client_pipeline_integration_test)
+    add_test(NAME client_disconnect_recovery COMMAND client_disconnect_recovery_test)
     set_tests_properties(
         client_resp_codec
         client_basic_integration
         client_pipeline_integration
+        client_disconnect_recovery
         PROPERTIES LABELS "client"
     )
 
@@ -627,6 +703,10 @@ if(BUILD_TEST)
     add_test(NAME server_transaction_multi_exec COMMAND server_transaction_multi_exec_test)
     add_test(NAME server_pubsub_integration COMMAND server_pubsub_integration_test)
     add_test(NAME server_observability_info COMMAND server_observability_info_test)
+    add_test(NAME server_regression_matrix COMMAND server_regression_matrix_test)
+    add_test(NAME server_resp_error_recovery COMMAND server_resp_error_recovery_test)
+    add_test(NAME server_input_buffer_limit COMMAND server_input_buffer_limit_test)
+    add_test(NAME server_half_close_inflight_request COMMAND server_half_close_inflight_request_test)
     set_tests_properties(
         server_message_framing_integration
         server_error_paths_integration
@@ -637,6 +717,11 @@ if(BUILD_TEST)
         server_shutdown_integration
         server_transaction_multi_exec
         server_pubsub_integration
+        server_observability_info
+        server_regression_matrix
+        server_resp_error_recovery
+        server_input_buffer_limit
+        server_half_close_inflight_request
         PROPERTIES LABELS "server"
     )
     # ========================================================================

@@ -3,21 +3,20 @@
 #include <set>
 #include <vector>
 #include <memory>
-#include <mutex>
-#include <functional>
+
 #include <chrono>
 #include <map>
 #include "Timer.h"
 #include "Channel.h"
-#include "logger.h"
-
 class EventLoop;
 
+// 定时器队列，管理多个定时器
 class TimerQueue {
 public:
-    using Clock = std::chrono::steady_clock;
-    using TimePoint = std::chrono::steady_clock::time_point;
-    using Duration = std::chrono::milliseconds;
+
+    using Clock = std::chrono::steady_clock; // 时钟
+    using TimePoint = std::chrono::steady_clock::time_point; // 时间点
+    using Duration = std::chrono::milliseconds; // 时间间隔
     
     explicit TimerQueue(EventLoop* loop);
     ~TimerQueue();

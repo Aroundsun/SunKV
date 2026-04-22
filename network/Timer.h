@@ -5,6 +5,7 @@
 #include <chrono>
 #include "logger.h"
 
+// 定时器，管理一个定时器
 class Timer {
 public:
     using TimerCallback = std::function<void()>;

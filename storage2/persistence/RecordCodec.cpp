@@ -8,19 +8,24 @@
 namespace sunkv::storage2 {
 
 namespace {
+// 追加 8 位整数
 static void appendU8(std::vector<uint8_t>& out, uint8_t v) { out.push_back(v); }
+// 追加 32 位整数
 static void appendU32(std::vector<uint8_t>& out, uint32_t v) {
     for (int i = 0; i < 4; ++i) out.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
 }
+// 追加 64 位整数
 static void appendU64(std::vector<uint8_t>& out, uint64_t v) {
     for (int i = 0; i < 8; ++i) out.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
 }
+// 读取 8 位整数
 static bool readU8(const uint8_t* data, size_t len, size_t* off, uint8_t* out) {
     if (*off + 1 > len) return false;
     *out = data[*off];
     *off += 1;
     return true;
 }
+// 读取 32 位整数
 static bool readU32(const uint8_t* data, size_t len, size_t* off, uint32_t* out) {
     if (*off + 4 > len) return false;
     uint32_t v = 0;
@@ -29,6 +34,7 @@ static bool readU32(const uint8_t* data, size_t len, size_t* off, uint32_t* out)
     *out = v;
     return true;
 }
+// 读取 64 位整数
 static bool readU64(const uint8_t* data, size_t len, size_t* off, uint64_t* out) {
     if (*off + 8 > len) return false;
     uint64_t v = 0;
@@ -39,9 +45,10 @@ static bool readU64(const uint8_t* data, size_t len, size_t* off, uint64_t* out)
 }
 } // namespace
 
+// 编码 Record 为二进制
 std::vector<uint8_t> RecordCodec::encode(const Record& r) {
     // 格式：
-    // magic(2)='R''C'
+    // magic(2)='R''C' 
     // version(1)
     // record_version(u64)
     // dv_len(u32)
@@ -57,7 +64,7 @@ std::vector<uint8_t> RecordCodec::encode(const Record& r) {
     out.insert(out.end(), dv.begin(), dv.end());
     return out;
 }
-
+// 解码二进制为 Record
 bool RecordCodec::decode(const uint8_t* data, size_t len, Record* out) {
     if (!data || !out) return false;
     size_t off = 0;

@@ -38,7 +38,7 @@ int main() {
         if (kv.first == "live_str") {
             has_live_str = true;
             assert(kv.second.value.type == DataType::STRING);
-            assert(kv.second.value.string_value == "v");
+            assert(kv.second.value.string_value.data == "v");
         } else if (kv.first == "live_hash") {
             has_live_hash = true;
             assert(kv.second.value.type == DataType::HASH);

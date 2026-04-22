@@ -1,0 +1,49 @@
+name: CI Full
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            clang-format clang-tidy libspdlog-dev ripgrep
+
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DBUILD_TEST=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_GTest=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run all tests
+        working-directory: build
+        run: |
+          ctest --output-on-failure | tee ctest-full.log
+
+      - name: Upload full test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-full-artifacts
+          path: |
+            build/ctest-full.log
+            data/logs/**

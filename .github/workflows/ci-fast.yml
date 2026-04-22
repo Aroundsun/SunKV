@@ -1,0 +1,54 @@
+name: CI Fast
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            clang-format clang-tidy libspdlog-dev ripgrep
+
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DBUILD_TEST=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_GTest=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Format (clang-format, changed files)
+        run: ./scripts/clang_format_check.sh
+
+      - name: Lint (clang-tidy, changed files)
+        run: ./scripts/clang_tidy_check.sh
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run core server smoke tests
+        working-directory: build
+        run: |
+          ctest -R "server_string_commands|server_collection_commands|server_transaction_multi_exec|server_pubsub_integration|server_observability_info" --output-on-failure | tee ctest-fast.log
+
+      - name: Upload fast test logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-fast-log
+          path: |
+            build/ctest-fast.log
+            data/logs/**

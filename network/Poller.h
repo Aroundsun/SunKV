@@ -2,9 +2,8 @@
 
 #include <vector>
 #include <map>
-#include <memory>
 #include <sys/epoll.h>
-#include "logger.h"
+
 
 class Channel;
 class EventLoop;
@@ -12,7 +11,7 @@ class EventLoop;
 // Poller 类封装了 epoll 操作
 class Poller {
 public:
-    using ChannelList = std::vector<Channel*>;
+    using ChannelList = std::vector<Channel*>; //  Channel 列表
     
     explicit Poller(EventLoop* loop);
     ~Poller();

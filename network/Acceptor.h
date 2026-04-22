@@ -42,13 +42,13 @@ private:
     // 处理读事件（新连接）
     void handleRead();
     
-    EventLoop* loop_;
-    std::unique_ptr<Socket> acceptSocket_;
-    std::unique_ptr<Channel> acceptChannel_;
-    NewConnectionCallback newConnectionCallback_;
-    bool listening_;
-    int idleFd_;
+    EventLoop* loop_;  // 事件循环
+    std::unique_ptr<Socket> acceptSocket_;  // 接受套接字
+    std::unique_ptr<Channel> acceptChannel_;  // 接受通道
+    NewConnectionCallback newConnectionCallback_;  // 新连接回调
+    bool listening_;  // 是否正在监听
+    int idleFd_;  // 空闲文件描述符
     
-    const std::string listenAddr_;
-    const uint16_t listenPort_;
+    const std::string listenAddr_;  // 监听地址
+    const uint16_t listenPort_;  // 监听端口
 };

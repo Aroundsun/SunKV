@@ -10,7 +10,7 @@
 
 namespace sunkv::storage2 {
 
-// v2 StorageEngine：实现命令语义（v0.1：string+ttl+list+set+hash+keys/dbsize）。
+// v2 StorageEngine：实现命令语义
 class StorageEngine final : public IStorageAPI {
 public:
     explicit StorageEngine(std::unique_ptr<IBackend> backend);
@@ -21,11 +21,12 @@ public:
     bool applyMutation(const Mutation& m);
     std::vector<std::pair<std::string, Record>> dumpAllLiveRecords();
 
+    // string
     StorageResult<bool> set(const std::string& key, const std::string& value) override;
     StorageResult<std::optional<std::string>> get(const std::string& key) override;
     StorageResult<int64_t> del(const std::string& key) override;
     StorageResult<int64_t> exists(const std::string& key) override;
-
+    // ttl
     StorageResult<int64_t> expire(const std::string& key, int64_t ttl_seconds) override;
     StorageResult<int64_t> persist(const std::string& key) override;
     StorageResult<int64_t> ttl(const std::string& key) override;
@@ -34,19 +35,20 @@ public:
     StorageResult<int64_t> dbsize() override;
     StorageResult<std::vector<std::string>> keys() override;
 
+    // list
     StorageResult<int64_t> lpush(const std::string& key, const std::vector<std::string>& values) override;
     StorageResult<int64_t> rpush(const std::string& key, const std::vector<std::string>& values) override;
     StorageResult<std::optional<std::string>> lpop(const std::string& key) override;
     StorageResult<std::optional<std::string>> rpop(const std::string& key) override;
     StorageResult<int64_t> llen(const std::string& key) override;
     StorageResult<std::optional<std::string>> lindex(const std::string& key, int64_t index) override;
-
+    // set
     StorageResult<int64_t> sadd(const std::string& key, const std::vector<std::string>& members) override;
     StorageResult<int64_t> srem(const std::string& key, const std::vector<std::string>& members) override;
     StorageResult<int64_t> scard(const std::string& key) override;
     StorageResult<int64_t> sismember(const std::string& key, const std::string& member) override;
     StorageResult<std::vector<std::string>> smembers(const std::string& key) override;
-
+    // hash
     StorageResult<int64_t> hset(const std::string& key, const std::string& field, const std::string& value) override;
     StorageResult<std::optional<std::string>> hget(const std::string& key, const std::string& field) override;
     StorageResult<int64_t> hdel(const std::string& key, const std::vector<std::string>& fields) override;

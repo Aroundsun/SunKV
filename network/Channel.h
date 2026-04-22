@@ -73,30 +73,29 @@ public:
         kCloseEvent = 1 << 3
     };
 
-    // 静态常量定义
-    static const int kNoneEventStatic = 0;
-    static const int kReadEventStatic = 1 << 0;
-    static const int kWriteEventStatic = 1 << 1;
-    static const int kErrorEventStatic = 1 << 2;
-    static const int kCloseEventStatic = 1 << 3;
+    static const int kNoneEventStatic = 0; // 无事件
+    static const int kReadEventStatic = 1 << 0; // 读事件
+    static const int kWriteEventStatic = 1 << 1; // 写事件
+    static const int kErrorEventStatic = 1 << 2; // 错误事件
+    static const int kCloseEventStatic = 1 << 3; // 关闭事件
 
 private:
     void update();
     void handleEventWithGuard();
     
     EventLoop* loop_;
-    const int fd_;
+    const int fd_;  // 文件描述符
     int events_;    // 关注的事件
     int revents_;   // 接收到的事件
     int index_;     // 用于 Poller 内部状态管理
     
-    std::weak_ptr<void> tie_;
-    bool tied_;
-    bool eventHandling_;
-    bool addedToLoop_;
+    std::weak_ptr<void> tie_; // 绑定一个对象，用于智能指针管理
+    bool tied_; // 是否绑定
+    bool eventHandling_; // 是否正在处理事件
+    bool addedToLoop_; // 是否添加到事件循环
     
-    ReadEventCallback readCallback_;
-    EventCallback writeCallback_;
-    EventCallback closeCallback_;
-    EventCallback errorCallback_;
+    ReadEventCallback readCallback_; // 读事件回调
+    EventCallback writeCallback_; // 写事件回调
+    EventCallback closeCallback_; // 关闭事件回调
+    EventCallback errorCallback_; // 错误事件回调
 };

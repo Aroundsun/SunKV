@@ -35,28 +35,18 @@ class EventLoop {
 public:
     using Functor = std::function<void()>;                 ///< 任务函数类型
     
-    /**
-     * @brief 构造函数
-     */
+
     EventLoop();
     
-    /**
-     * @brief 析构函数
-     */
     ~EventLoop();
     
     // 禁止拷贝和赋值
     EventLoop(const EventLoop&) = delete;
     EventLoop& operator=(const EventLoop&) = delete;
     
-    /**
-     * @brief 启动事件循环
-     */
+
     void loop();
     
-    /**
-     * @brief 退出事件循环
-     */
     void quit();
     
     /**

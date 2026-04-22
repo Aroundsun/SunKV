@@ -4,6 +4,7 @@ Checks: >
   performance-*,
   readability-*,
   modernize-*,
+  -modernize-use-trailing-return-type,
   cppcoreguidelines-avoid-c-arrays,
   cppcoreguidelines-init-variables,
   cppcoreguidelines-narrowing-conversions

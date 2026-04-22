@@ -16,8 +16,7 @@
 #include <string>
 #include <algorithm>
 #include <cstring>
-#include <cassert>
-#include "logger.h"
+#include <cassert> 
 
 /**
  * @class Buffer
@@ -31,10 +30,7 @@ public:
     static const size_t kCheapPrepend = 8;              ///< 预留空间大小
     static const char kCRLF[];                          ///< CRLF 标记
     
-    /**
-     * @brief 构造函数
-     * @param initialSize 初始缓冲区大小
-     */
+
     explicit Buffer(size_t initialSize = kInitialSize)
         : buffer_(kCheapPrepend + initialSize),
           readerIndex_(kCheapPrepend),
@@ -48,28 +44,18 @@ public:
     Buffer(const Buffer&) = default;
     Buffer& operator=(const Buffer&) = default;
     
-    /**
-     * @brief 交换两个缓冲区
-     * @param rhs 另一个缓冲区
-     */
+
     void swap(Buffer& rhs) {
         buffer_.swap(rhs.buffer_);
         std::swap(readerIndex_, rhs.readerIndex_);
         std::swap(writerIndex_, rhs.writerIndex_);
     }
     
-    /**
-     * @brief 获取可读字节数
-     * @return 可读字节数
-     */
+
     size_t readableBytes() const {
         return writerIndex_ - readerIndex_;
     }
-    
-    /**
-     * @brief 获取可写字节数
-     * @return 可写字节数
-     */
+
     size_t writableBytes() const {
         return buffer_.size() - writerIndex_;
     }

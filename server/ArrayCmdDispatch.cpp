@@ -200,6 +200,7 @@ bool ArrayCmdDispatchCtx::cmdUnsubscribe() {
     }
     return true;
 }
+// 发布消息
 bool ArrayCmdDispatchCtx::cmdPublish() {
     if (cmd_array.size() != 3 || !require_bulk(1) || !require_bulk(2)) {
         return false;

@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <unordered_map>
 #include <string_view>
 #include "../network/Buffer.h"
 #include "../common/MemoryPool.h"

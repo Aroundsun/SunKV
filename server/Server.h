@@ -15,7 +15,7 @@
 #include "../network/EventLoop.h"
 #include "../protocol/RESPType.h"
 #include "../protocol/RESPParser.h"
-#include "common/Config.h"
+#include "../common/Config.h"
 #include "storage2/Factory.h"
 
 struct ArrayCmdDispatchCtx;
@@ -206,7 +206,7 @@ private:
     // 发布消息
     int64_t publishMessage_(const std::string& channel, const std::string& payload);
     void clearSubscriptionsForConnection_(const std::shared_ptr<TcpConnection>& conn);
-    void refreshPubSubStatsLocked_();
+    void refreshPubSubStatsLocked_(); // 刷新发布订阅统计信息
     void updateMaxInputBufferBytes_(size_t value);
     void recordCommandMetrics_(const std::shared_ptr<TcpConnection>& conn,
                                const std::shared_ptr<ConnParseState>& ctx,
@@ -261,18 +261,18 @@ private:
     std::atomic<uint64_t> total_connections_{0};
     std::atomic<uint64_t> current_connections_{0};
     std::atomic<uint64_t> total_commands_{0};
-    std::atomic<uint64_t> total_command_errors_{0};
-    std::atomic<uint64_t> total_slow_commands_{0};
-    std::atomic<uint64_t> total_command_latency_us_{0};
-    std::atomic<uint64_t> max_command_latency_us_{0};
+    std::atomic<uint64_t> total_command_errors_{0}; // 总命令错误数
+    std::atomic<uint64_t> total_slow_commands_{0}; // 总慢命令数
+    std::atomic<uint64_t> total_command_latency_us_{0}; // 总命令延迟时间
+    std::atomic<uint64_t> max_command_latency_us_{0}; // 最大命令延迟时间
     std::atomic<uint64_t> expired_keys_cleaned_{0};   // 清理的过期键计数
-    std::atomic<uint64_t> total_operations_{0};
-    std::atomic<uint64_t> max_conn_input_buffer_bytes_{0};
-    std::atomic<uint64_t> output_buffer_peak_bytes_{0};
-    std::atomic<uint64_t> pubsub_channel_count_{0};
-    std::atomic<uint64_t> pubsub_subscription_count_{0};
-    std::atomic<uint64_t> pubsub_publish_total_{0};
-    std::atomic<uint64_t> pubsub_delivered_total_{0};
-    std::chrono::steady_clock::time_point start_time_;
+    std::atomic<uint64_t> total_operations_{0}; // 总操作数
+    std::atomic<uint64_t> max_conn_input_buffer_bytes_{0}; // 最大连接输入缓冲区大小
+    std::atomic<uint64_t> output_buffer_peak_bytes_{0}; // 输出缓冲区峰值大小
+    std::atomic<uint64_t> pubsub_channel_count_{0}; // 频道数量
+    std::atomic<uint64_t> pubsub_subscription_count_{0}; // 订阅频道数量
+    std::atomic<uint64_t> pubsub_publish_total_{0}; // 发布消息总数
+    std::atomic<uint64_t> pubsub_delivered_total_{0}; // 已交付消息总数
+    std::chrono::steady_clock::time_point start_time_; // 服务器启动时间
     
 };

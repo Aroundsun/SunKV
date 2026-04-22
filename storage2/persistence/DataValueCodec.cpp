@@ -2,21 +2,25 @@
 
 namespace sunkv::storage2 {
 namespace {
-
+// 追加 8 位整数
 static void appendU8(std::vector<uint8_t>& out, uint8_t v) { out.push_back(v); }
+// 追加 32 位整数
 static void appendU32(std::vector<uint8_t>& out, uint32_t v) {
     for (int i = 0; i < 4; ++i) out.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
 }
+// 追加 64 位整数
 static void appendI64(std::vector<uint8_t>& out, int64_t v) {
     uint64_t u = static_cast<uint64_t>(v);
     for (int i = 0; i < 8; ++i) out.push_back(static_cast<uint8_t>((u >> (i * 8)) & 0xFF));
 }
+// 读取 8 位整数
 static bool readU8(const uint8_t* data, size_t len, size_t* off, uint8_t* out) {
     if (*off + 1 > len) return false;
     *out = data[*off];
     *off += 1;
     return true;
 }
+// 读取 32 位整数
 static bool readU32(const uint8_t* data, size_t len, size_t* off, uint32_t* out) {
     if (*off + 4 > len) return false;
     uint32_t v = 0;
@@ -24,7 +28,8 @@ static bool readU32(const uint8_t* data, size_t len, size_t* off, uint32_t* out)
     *off += 4;
     *out = v;
     return true;
-}
+} 
+// 读取 64 位整数
 static bool readI64(const uint8_t* data, size_t len, size_t* off, int64_t* out) {
     if (*off + 8 > len) return false;
     uint64_t v = 0;
@@ -33,11 +38,14 @@ static bool readI64(const uint8_t* data, size_t len, size_t* off, int64_t* out) 
     *out = static_cast<int64_t>(v);
     return true;
 }
+// 追加字节数组
 static void appendBytes(std::vector<uint8_t>& out, const uint8_t* p, size_t n) { out.insert(out.end(), p, p + n); }
+// 追加字符串
 static void appendString(std::vector<uint8_t>& out, const std::string& s) {
     appendU32(out, static_cast<uint32_t>(s.size()));
     appendBytes(out, reinterpret_cast<const uint8_t*>(s.data()), s.size());
 }
+// 读取字符串
 static bool readString(const uint8_t* data, size_t len, size_t* off, std::string* out) {
     uint32_t n = 0;
     if (!readU32(data, len, off, &n)) return false;
@@ -48,6 +56,7 @@ static bool readString(const uint8_t* data, size_t len, size_t* off, std::string
 }
 } // namespace
 
+// 编码 DataValue 为二进制
 std::vector<uint8_t> DataValueCodec::encode(const DataValue& v, int64_t expire_at_epoch_us) {
     std::vector<uint8_t> payload;
     switch (v.type) {
@@ -84,7 +93,7 @@ std::vector<uint8_t> DataValueCodec::encode(const DataValue& v, int64_t expire_a
     appendBytes(out, payload.data(), payload.size());
     return out;
 }
-
+// 解码二进制为 DataValue
 bool DataValueCodec::decode(const uint8_t* data, size_t len, DataValue* out, int64_t* expire_at_epoch_us) {
     if (!data || !out || !expire_at_epoch_us) return false;
     size_t off = 0;

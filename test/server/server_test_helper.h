@@ -21,10 +21,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "common/Config.h"
-#include "network/logger.h"
-#include "protocol/RESPParser.h"
-#include "server/Server.h"
+#include "../../common/Config.h"
+#include "../../network/logger.h"
+#include "../../protocol/RESPParser.h"
+#include "../../server/Server.h"
 
 namespace server_test {
 

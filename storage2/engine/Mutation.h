@@ -15,16 +15,16 @@ namespace sunkv::storage2 {
     };
 
     enum class MutationType {
-        PutRecord = 0,
-        DelKey = 1,
-        ClearAll = 2,
+        PutRecord = 0, // key -> record（包含 value + expire_at）
+        DelKey = 1, // 删除 key
+        ClearAll = 2, // 清空
     };
 
     struct Mutation {
-        MutationType type{MutationType::PutRecord};
-        std::string key;
-        std::optional<Record> record; // PutRecord 必填
-        int64_t ts_us{0};
+        MutationType type{MutationType::PutRecord}; // 写入事件类型
+        std::string key; // 写入事件的 key
+        std::optional<Record> record; // PutRecord 必填，记录包含 value + expire_at
+        int64_t ts_us{0}; // 写入事件的时间
     };
 
 } // namespace sunkv::storage2

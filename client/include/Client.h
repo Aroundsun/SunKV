@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "client/include/RespValue.h"
-#include "client/include/Result.h"
+#include "RespValue.h"
+#include "Result.h"
 
 namespace sunkv::client {
 

@@ -144,17 +144,21 @@ void TcpServer::stop() {
             acceptor_->stop();
         }
         
-        // 关闭所有现有连接
+        // 关闭所有现有连接。
+        // 不能在此立即 clear()：forceClose() 是异步投递到各自 ioLoop，
+        // 连接最终会走 removeConnectionInLoop -> connectDestroyed -> Channel::remove。
+        // 若提前释放 shared_ptr，可能导致 Channel 析构时仍 addedToLoop_，触发断言。
         for (auto& conn : connections_) {
-            conn.second->forceClose();
+            if (conn.second) {
+                conn.second->forceClose();
+            }
         }
-        connections_.clear();
         
         // 停止线程池
         if (threadPool_) {
             threadPool_->stop();
         }
-        
+
         LOG_INFO("TcpServer::stop [{}] - 服务器已停止", name_);
     }
 }

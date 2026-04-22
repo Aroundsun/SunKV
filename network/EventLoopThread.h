@@ -32,11 +32,11 @@ private:
     // 线程函数
     void threadFunc();
     
-    EventLoop* loop_;
-    bool exiting_;
-    std::thread thread_;
-    std::mutex mutex_;
-    std::condition_variable cond_;
-    ThreadInitCallback callback_;
-    std::string name_;
+    EventLoop* loop_; // 事件循环
+    bool exiting_; // 是否退出
+    std::thread thread_; // 线程
+    std::mutex mutex_; // 互斥锁
+    std::condition_variable cond_; // 条件变量
+    ThreadInitCallback callback_; // 线程初始化回调
+    std::string name_; // 线程名称
 };
