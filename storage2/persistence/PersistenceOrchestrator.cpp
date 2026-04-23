@@ -98,14 +98,24 @@ void PersistenceOrchestrator::stopPeriodicSnapshot() {
         snapshot_thread_.join();
     }
 }
-
+// 周期性快照线程
 void PersistenceOrchestrator::snapshotIntervalLoop_() {
     while (snapshot_interval_running_.load()) {
         const int sec = std::max(1, opt_.snapshot_interval_seconds);
-        std::this_thread::sleep_for(std::chrono::seconds(sec));
+        // 可中断等待：避免 stopPeriodicSnapshot() 因长间隔 sleep 被 join 卡住。
+        int waited_ms = 0; // 等待时间
+        const int target_ms = sec * 1000; // 目标时间
+        constexpr int kSleepSliceMs = 100; // 睡眠切片时间
+        while (snapshot_interval_running_.load() && waited_ms < target_ms) {
+            const int sleep_ms = std::min(kSleepSliceMs, target_ms - waited_ms);
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+            waited_ms += sleep_ms;
+        }
+        // 如果快照线程被停止，则退出循环
         if (!snapshot_interval_running_.load()) {
             break;
         }
+        
         if (!takeSnapshotNow()) {
             LOG_WARN("[storage2.snapshot] periodic snapshot failed (will retry)");
         }
