@@ -120,20 +120,23 @@ void TcpServer::removeConnection(const std::shared_ptr<TcpConnection>& conn) {
     loop_->runInLoop(
         std::bind(&TcpServer::removeConnectionInLoop, this, conn));
 }
-
+// 在事件循环线程中删除连接
 void TcpServer::removeConnectionInLoop(const std::shared_ptr<TcpConnection>& conn) {
     loop_->assertInLoopThread();
     
     LOG_DEBUG("TcpServer::removeConnectionInLoop [{}] - 连接 [{}]", name_, conn->name());
     
     const size_t n = connections_.erase(conn->name());
-    (void)n;
-    assert(n == 1);
+    if (n == 0) {
+        // 停机阶段可能已提前从连接表移除
+        LOG_DEBUG("TcpServer::removeConnectionInLoop [{}] - 连接 [{}] 已不在连接表中", name_, conn->name());
+    }
     
     EventLoop* ioLoop = conn->getLoop();
     ioLoop->queueInLoop(
         std::bind(&TcpConnection::connectDestroyed, conn));
 }
+
 
 void TcpServer::stop() {
     if (started_.exchange(false)) {
@@ -144,14 +147,21 @@ void TcpServer::stop() {
             acceptor_->stop();
         }
         
-        // 关闭所有现有连接。
-        // 不能在此立即 clear()：forceClose() 是异步投递到各自 ioLoop，
-        // 连接最终会走 removeConnectionInLoop -> connectDestroyed -> Channel::remove。
-        // 若提前释放 shared_ptr，可能导致 Channel 析构时仍 addedToLoop_，触发断言。
-        for (auto& conn : connections_) {
-            if (conn.second) {
-                conn.second->forceClose();
+        // 停机时将连接对象先搬到本地 keepalive，保证 clear 之后对象不会提前析构。
+        // 这样既避免生命周期断言，也避免后续回调依赖主循环继续清理连接表。
+        std::vector<TcpConnectionPtr> keepalive; 
+        keepalive.reserve(connections_.size()); 
+        // 将连接对象搬到本地 keepalive
+        for (auto& entry : connections_) {
+            if (entry.second) {
+                keepalive.push_back(entry.second);
             }
+        }
+        connections_.clear();
+
+        // 异步触发连接关闭，connectDestroyed 将在各自 ioLoop 中完成 Channel::remove。
+        for (auto& conn : keepalive) {
+            conn->forceClose();
         }
         
         // 停止线程池
