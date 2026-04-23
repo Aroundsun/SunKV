@@ -2,108 +2,107 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
-HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-6379}"
-RUNTIME_DIR="${RUNTIME_DIR:-${ROOT_DIR}/tmp/runtime/server_${PORT}}"
+BUILD_DIR="${ROOT_DIR}/build/server"
+BIN_PATH="${BUILD_DIR}/bin/sunkv"
 
+# 默认服务器配置文件路径
+CONFIG_PATH="${ROOT_DIR}/sunkv.conf"
+# 默认构建模式
+BUILD_MODE="Release"
+# 是否配置
+DO_CONFIGURE="1"  
+# 是否构建
+DO_BUILD="1"
+
+# 帮助信息
 usage() {
   cat <<'EOF'
-用法:
-  scripts/start_server.sh [--host HOST] [--port PORT] [--build-dir DIR] [--runtime-dir DIR] [--] [额外服务端参数...]
+Usage:
+  scripts/start_server.sh [options] [-- <extra server args>]
 
-说明:
-  - 默认二进制: <build-dir>/sunkv
-  - 自动创建 data/logs/wal/snapshot 目录
-  - 未显式传日志参数时，默认写到 runtime 目录
+Options:
+  -h, --help                 Show help
+  --config <path>            Server config path (default: ./sunkv.conf)
+  --build-mode <mode>        CMake build mode (default: Release)
+  --no-configure             Skip cmake configure
+  --no-build                 Skip cmake build
 
-示例:
+Examples:
   scripts/start_server.sh
-  scripts/start_server.sh --port 6380 -- --thread-pool-size 8 --max-connections 4000
+  scripts/start_server.sh --config ./sunkv.conf
+  scripts/start_server.sh --no-build
 EOF
 }
-
-EXTRA_ARGS=()
+# 解析参数
+SERVER_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --host)
-      HOST="$2"
-      shift 2
-      ;;
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --build-dir)
-      BUILD_DIR="$2"
-      shift 2
-      ;;
-    --runtime-dir)
-      RUNTIME_DIR="$2"
-      shift 2
-      ;;
     -h|--help)
       usage
       exit 0
       ;;
+    --config)
+      CONFIG_PATH="${2:-}"
+      shift 2
+      ;;
+    --build-mode)
+      BUILD_MODE="${2:-}"
+      shift 2
+      ;;
+    --no-configure)
+      DO_CONFIGURE="0"
+      shift
+      ;;
+    --no-build)
+      DO_BUILD="0"
+      shift
+      ;;
     --)
       shift
-      EXTRA_ARGS+=("$@")
+      SERVER_ARGS+=("$@")
       break
       ;;
     *)
-      EXTRA_ARGS+=("$1")
+      SERVER_ARGS+=("$1")
       shift
       ;;
   esac
 done
 
-SERVER_BIN="${BUILD_DIR}/sunkv"
-if [[ ! -x "${SERVER_BIN}" ]]; then
-  echo "错误: 找不到可执行文件 ${SERVER_BIN}" >&2
-  echo "请先执行: cmake --build \"${BUILD_DIR}\" -j" >&2
+if [[ -z "${CONFIG_PATH}" ]]; then
+  echo "[start_server] config path is empty"
+  exit 1
+fi
+# 检查配置文件是否存在
+if [[ ! -f "${CONFIG_PATH}" ]]; then
+  echo "[start_server] config file not found: ${CONFIG_PATH}"
   exit 1
 fi
 
-DATA_DIR="${RUNTIME_DIR}/data"
-LOG_DIR="${DATA_DIR}/logs"
-WAL_DIR="${DATA_DIR}/wal"
-SNAPSHOT_DIR="${DATA_DIR}/snapshot"
-LOG_FILE="${LOG_DIR}/sunkv.log"
+# 创建构建目录
+mkdir -p "${BUILD_DIR}"
 
-mkdir -p "${LOG_DIR}" "${WAL_DIR}" "${SNAPSHOT_DIR}"
-
-HAS_DATA_DIR=0
-HAS_WAL_DIR=0
-HAS_SNAPSHOT_DIR=0
-HAS_LOG_FILE=0
-
-for arg in "${EXTRA_ARGS[@]}"; do
-  case "${arg}" in
-    --data-dir) HAS_DATA_DIR=1 ;;
-    --wal-dir) HAS_WAL_DIR=1 ;;
-    --snapshot-dir) HAS_SNAPSHOT_DIR=1 ;;
-    --log-file) HAS_LOG_FILE=1 ;;
-  esac
-done
-
-CMD=("${SERVER_BIN}" "--host" "${HOST}" "--port" "${PORT}")
-if [[ ${HAS_DATA_DIR} -eq 0 ]]; then
-  CMD+=("--data-dir" "${DATA_DIR}")
+if [[ "${DO_CONFIGURE}" == "1" ]]; then
+  echo "[start_server] configuring (${BUILD_MODE}) ..."
+  cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_MODE}"
 fi
-if [[ ${HAS_WAL_DIR} -eq 0 ]]; then
-  CMD+=("--wal-dir" "${WAL_DIR}")
-fi
-if [[ ${HAS_SNAPSHOT_DIR} -eq 0 ]]; then
-  CMD+=("--snapshot-dir" "${SNAPSHOT_DIR}")
-fi
-if [[ ${HAS_LOG_FILE} -eq 0 ]]; then
-  CMD+=("--log-file" "${LOG_FILE}")
-fi
-CMD+=("${EXTRA_ARGS[@]}")
 
-echo "[start_server] host=${HOST} port=${PORT}"
-echo "[start_server] runtime=${RUNTIME_DIR}"
-echo "[start_server] exec: ${CMD[*]}"
-exec "${CMD[@]}"
+# 构建
+if [[ "${DO_BUILD}" == "1" ]]; then
+  echo "[start_server] building sunkv ..."
+  cmake --build "${BUILD_DIR}" --target sunkv -j
+fi
 
+# 检查二进制文件是否存在
+if [[ ! -x "${BIN_PATH}" ]]; then
+  echo "[start_server] binary not found: ${BIN_PATH}"
+  exit 1
+fi
+
+# 构建服务器启动参数
+RUN_ARGS=(--config "${CONFIG_PATH}")
+RUN_ARGS+=("${SERVER_ARGS[@]}")
+
+# 启动服务器
+echo "[start_server] starting: ${BIN_PATH} ${RUN_ARGS[*]-}"
+exec "${BIN_PATH}" "${RUN_ARGS[@]}"
