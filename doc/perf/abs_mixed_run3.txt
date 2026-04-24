@@ -1,0 +1,10 @@
+WARNING: Could not fetch server CONFIG
+ 
+SET: rps=0.0 (overall: 0.0) avg_msec=-nan (overall: -nan)
+                                                          
+SET: 921659.00 requests per second, p50=1.039 msec
+ 
+GET: rps=0.0 (overall: 0.0) avg_msec=-nan (overall: -nan)
+                                                          
+GET: 970873.81 requests per second, p50=0.847 msec
+
